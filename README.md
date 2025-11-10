@@ -2,6 +2,17 @@
 
 Automatically generate visual station markers and text labels along alignment centerlines in IFC files.
 
+This image show the result in Trimble Connect Online Viewer. The result in other viewers may be different due to different support of IfcAnnotation and IfcTextLiteral.
+
+<img width="855" height="769" alt="image" src="https://github.com/user-attachments/assets/c524af4f-6d07-42a3-85f8-ba4c870ba6e9" />
+
+This is the same file in Blender/Bonsai (0.8.3 post1)
+<img width="592" height="499" alt="image" src="https://github.com/user-attachments/assets/bd78ddb6-304d-47b6-acde-4acd8ed02f22" />
+
+This is the same file in BIMvision display IfcTextLiteral alongside the IfcAnnotation (only visible after double clicking on the annotation object in the ifc file tree.
+
+<img width="578" height="480" alt="image" src="https://github.com/user-attachments/assets/219b4f75-b051-441b-b146-cb18c60cfe46" />
+
 ## Overview
 
 This project provides a Python script that reads an IFC file containing alignment data with `IfcReferent` objects and creates visible station markers with text labels. The script generates both geometric markers (triangles/circles) and text annotations at each station point.
