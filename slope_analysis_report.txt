@@ -1,0 +1,82 @@
+============================================================
+SLOPE ANALYSIS REPORT - m_f-veg_CL-1000.ifc
+============================================================
+
+📊 ALIGNMENT OVERVIEW:
+   Total Length: 228.57 meters
+   Number of Vertical Segments: 6
+   Number of Slope Changes: 3
+
+🔶 SLOPE CHANGE POINTS:
+   1. Station 28.4m:
+      Grade Change: -3.0% → 2.0%
+      Height: 2.93m
+      Impact: Grade change from -3% downward to +2% upward
+
+   2. Station 106.9m:
+      Grade Change: 2.0% → -4.0%
+      Height: 3.63m
+      Impact: Grade change from +2% upward to -4% downward (steepest)
+
+   3. Station 192.9m:
+      Grade Change: -4.0% → 1.1%
+      Height: 1.82m
+      Impact: Grade change from -4% downward to +1.1% upward
+
+📈 VERTICAL SEGMENTS:
+   Segment 1: Station 8.5m - 28.4m
+      Length: 19.9m
+      Type: Constant Grade
+      Grade: -3.0% (constant)
+      Start Height: 3.52m
+
+   Segment 2: Station 28.4m - 63.5m
+      Length: 35.1m
+      Type: Vertical Curve (R=700m)
+      Grade: -3.0% → 2.0%
+      Start Height: 2.93m
+
+   Segment 3: Station 63.5m - 106.9m
+      Length: 43.4m
+      Type: Constant Grade
+      Grade: 2.0% (constant)
+      Start Height: 2.75m
+
+   Segment 4: Station 106.9m - 161.0m
+      Length: 54.1m
+      Type: Vertical Curve (R=-900m)
+      Grade: 2.0% → -4.0%
+      Start Height: 3.63m
+
+   Segment 5: Station 161.0m - 192.9m
+      Length: 31.9m
+      Type: Constant Grade
+      Grade: -4.0% (constant)
+      Start Height: 3.09m
+
+   Segment 6: Station 192.9m - 228.6m
+      Length: 35.7m
+      Type: Vertical Curve (R=700m)
+      Grade: -4.0% → 1.1%
+      Start Height: 1.82m
+
+📏 STATION ANALYSIS (Every 20m):
+   Station   0m: Height  3.52m, Slope  +0.0%
+   Station  20m: Height  3.17m, Slope  -3.0%
+   Station  40m: Height  2.63m, Slope  -1.3%
+   Station  60m: Height  2.34m, Slope  +1.5%
+   Station  80m: Height  3.08m, Slope  +2.0%
+   Station 100m: Height  3.49m, Slope  +2.0%
+   Station 120m: Height  3.85m, Slope  +0.6%
+   Station 140m: Height  3.99m, Slope  -1.7%
+   Station 160m: Height  3.92m, Slope  -3.9%
+   Station 180m: Height  2.33m, Slope  -4.0%
+   Station 200m: Height  1.55m, Slope  -3.0%
+   Station 220m: Height  1.00m, Slope  -0.1%
+
+🚧 ENGINEERING NOTES:
+   • Steepest downward grade: -4.0% (stations 161-193m)
+   • Steepest upward grade: +2.0% (stations 63-107m)
+   • Maximum grade change: 6.0% (at station 107m)
+   • Total elevation change: ~2.2m descent
+   • Critical drainage area: steep -4% section
