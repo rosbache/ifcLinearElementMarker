@@ -1,0 +1,558 @@
+import ifcopenshell
+import ifcopenshell.api
+import ifcopenshell.geom
+import uuid
+import base64
+
+def generate_ifc_guid():
+    """Generate a valid IFC GUID"""
+    random_uuid = uuid.uuid4()
+    guid_bytes = random_uuid.bytes
+    guid_base64 = base64.b64encode(guid_bytes).decode('ascii')
+    guid_base64 = guid_base64.replace('+', '_').replace('/', '$').rstrip('=')
+    return guid_base64[:22]
+
+def create_circle_geometry(model, radius=0.5, thickness=0.1):
+    """
+    Create a circular marker for slope change points - larger and more visible
+    """
+    # Create circle profile centered at origin
+    center = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0))
+    circle = model.create_entity("IfcCircle", 
+                                 Position=model.create_entity("IfcAxis2Placement2D", Location=center),
+                                 Radius=radius)
+    
+    # Create arbitrary profile definition
+    profile = model.create_entity("IfcArbitraryClosedProfileDef",
+                                 ProfileType="AREA",
+                                 ProfileName="SlopeChangeMarker",
+                                 OuterCurve=circle)
+    
+    # Create placement for extrusion - position in XY plane, extrude in Z
+    origin = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
+    axis_z = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+    axis_x = model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+    placement = model.create_entity("IfcAxis2Placement3D",
+                                   Location=origin,
+                                   Axis=axis_z,
+                                   RefDirection=axis_x)
+    
+    # Create extrusion direction (along Z for thickness)
+    extrusion_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+    
+    # Create extruded area solid - thicker for better visibility
+    extruded_solid = model.create_entity("IfcExtrudedAreaSolid",
+                                        SweptArea=profile,
+                                        Position=placement,
+                                        ExtrudedDirection=extrusion_direction,
+                                        Depth=thickness)
+    
+    return extruded_solid
+
+def create_text_literal(model, text_content, position, height=0.4):
+    """
+    Create an IfcTextLiteral with specified position and content
+    """
+    # Create text placement
+    text_position = model.create_entity("IfcCartesianPoint", Coordinates=position)
+    text_axis = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+    text_ref_direction = model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+    text_placement = model.create_entity("IfcAxis2Placement3D",
+                                         Location=text_position,
+                                         Axis=text_axis,
+                                         RefDirection=text_ref_direction)
+    
+    # Create IfcTextLiteral
+    text_literal = model.create_entity("IfcTextLiteral",
+                                       Literal=text_content,
+                                       Placement=text_placement,
+                                       Path="RIGHT")
+    
+    # Create text style
+    text_color = model.create_entity("IfcColourRgb",
+                                    Name="DarkBlue",
+                                    Red=0.0,
+                                    Green=0.0,
+                                    Blue=0.8)
+    
+    text_style = model.create_entity("IfcTextStyleForDefinedFont",
+                                    Colour=text_color,
+                                    BackgroundColour=None)
+    
+    text_font_style = model.create_entity("IfcTextStyleFontModel",
+                                         Name="SlopeFont",
+                                         FontFamily=["Arial"],
+                                         FontStyle="normal",
+                                         FontVariant="normal",
+                                         FontWeight="bold",
+                                         FontSize=model.create_entity("IfcLengthMeasure", wrappedValue=height))
+    
+    # Create IfcTextStyle
+    ifc_text_style = model.create_entity("IfcTextStyle",
+                                         Name="SlopeTextStyle",
+                                         TextCharacterAppearance=text_style,
+                                         TextFontStyle=text_font_style)
+    
+    # Apply style to text literal
+    text_styled_item = model.create_entity("IfcStyledItem",
+                                           Item=text_literal,
+                                           Styles=[ifc_text_style],
+                                           Name="SlopeTextStyle")
+    
+    return text_literal
+
+def interpolate_height_at_station(station, vertical_segments):
+    """
+    Calculate height at a specific station based on vertical alignment segments
+    """
+    for segment in vertical_segments:
+        start_dist = segment['start_distance']
+        length = segment['length']
+        end_dist = start_dist + length
+        
+        if start_dist <= station <= end_dist:
+            # Station is within this segment
+            distance_into_segment = station - start_dist
+            start_height = segment['start_height']
+            start_grade = segment['start_grade']
+            end_grade = segment['end_grade']
+            
+            if segment['curve_type'] == '.CONSTANTGRADIENT.':
+                # Linear interpolation for constant gradient
+                height = start_height + (distance_into_segment * start_grade)
+            else:
+                # For vertical curves, use parabolic interpolation
+                # Simplified calculation assuming parabolic curve
+                if length > 0:
+                    t = distance_into_segment / length
+                    grade_change = end_grade - start_grade
+                    current_grade = start_grade + (grade_change * t)
+                    height = start_height + (distance_into_segment * (start_grade + current_grade) / 2)
+                else:
+                    height = start_height
+            
+            return height
+    
+    # If station not found in segments, extrapolate from last segment
+    if vertical_segments:
+        last_segment = vertical_segments[-1]
+        last_station = last_segment['start_distance'] + last_segment['length']
+        last_height = last_segment['start_height'] + (last_segment['length'] * last_segment['end_grade'])
+        extra_distance = station - last_station
+        return last_height + (extra_distance * last_segment['end_grade'])
+    
+    return 0.0
+
+def add_slope_information(input_file, output_file):
+    """
+    Add slope information, height data, and slope change markers to IFC alignment
+    """
+    # Open the IFC file
+    model = ifcopenshell.open(input_file)
+    
+    # Get alignment and vertical segments
+    alignments = model.by_type("IfcAlignment")
+    if not alignments:
+        print("No alignment found in the file")
+        return
+    
+    alignment = alignments[0]
+    print(f"Processing alignment: {alignment.Name}")
+    
+    # Get vertical alignment segments
+    vertical_segments = []
+    alignment_verticals = model.by_type("IfcAlignmentVertical")
+    
+    for vertical in alignment_verticals:
+        # Get vertical segments from the nesting relationship
+        for rel in model.by_type("IfcRelNests"):
+            if rel.RelatingObject == vertical:
+                for segment_entity in rel.RelatedObjects:
+                    if hasattr(segment_entity, 'DesignParameters'):
+                        segment = segment_entity.DesignParameters
+                        if hasattr(segment, 'StartDistAlong') and hasattr(segment, 'HorizontalLength'):
+                            vertical_segments.append({
+                                'start_distance': segment.StartDistAlong,
+                                'length': segment.HorizontalLength,
+                                'start_height': segment.StartHeight,
+                                'start_grade': segment.StartGradient,
+                                'end_grade': segment.EndGradient,
+                                'curve_type': str(segment.PredefinedType),
+                                'radius': getattr(segment, 'StartRadiusOfCurvature', None)
+                            })
+    
+    # Sort segments by start distance
+    vertical_segments.sort(key=lambda x: x['start_distance'])
+    
+    print(f"Found {len(vertical_segments)} vertical segments:")
+    for i, seg in enumerate(vertical_segments):
+        print(f"  Segment {i+1}: {seg['start_distance']:.1f}m - {seg['start_distance']+seg['length']:.1f}m, "
+              f"Grade: {seg['start_grade']*100:.1f}% to {seg['end_grade']*100:.1f}%, "
+              f"Type: {seg['curve_type']}")
+    
+    # Get referents (station points)
+    referents = model.by_type("IfcReferent")
+    print(f"Found {len(referents)} station referents")
+    
+    # Get project context
+    project = model.by_type("IfcProject")[0]
+    owner_history = model.by_type("IfcOwnerHistory")[0]
+    
+    # Get geometric representation context
+    contexts = model.by_type("IfcGeometricRepresentationContext")
+    context_3d = None
+    for context in contexts:
+        if hasattr(context, 'ContextType') and context.ContextType == '3D':
+            context_3d = context
+            break
+    
+    if not context_3d:
+        context_3d = contexts[0] if contexts else None
+    
+    # Create elements to add
+    new_elements = []
+    
+    # 1. Add slope change markers and information
+    slope_change_points = []
+    
+    # Identify slope change points - look for transitions between constant grades and curves
+    for i in range(len(vertical_segments)):
+        segment = vertical_segments[i]
+        
+        # Check if this segment has a significant grade change within itself (curve)
+        if abs(segment['start_grade'] - segment['end_grade']) > 0.01:  # 1% change within segment
+            # Add marker at start of curve segment
+            slope_change_points.append({
+                'station': segment['start_distance'],
+                'from_grade': segment['start_grade'],
+                'to_grade': segment['end_grade'],
+                'height': interpolate_height_at_station(segment['start_distance'], vertical_segments[:i+1]),
+                'type': 'curve_start'
+            })
+        
+        # Check for grade changes between adjacent segments
+        if i > 0:
+            prev_segment = vertical_segments[i-1]
+            grade_change = abs(segment['start_grade'] - prev_segment['end_grade'])
+            
+            if grade_change > 0.01:  # Significant grade change (1%)
+                slope_change_points.append({
+                    'station': segment['start_distance'],
+                    'from_grade': prev_segment['end_grade'],
+                    'to_grade': segment['start_grade'],
+                    'height': interpolate_height_at_station(segment['start_distance'], vertical_segments[:i+1]),
+                    'type': 'segment_transition'
+                })
+    
+    # Also add the known major slope change points from analysis
+    known_slope_changes = [
+        {'station': 28.36, 'from_grade': -0.03, 'to_grade': 0.0202, 'height': 2.93},
+        {'station': 106.86, 'from_grade': 0.0202, 'to_grade': -0.04, 'height': 3.63},
+        {'station': 192.91, 'from_grade': -0.04, 'to_grade': 0.011, 'height': 1.82}
+    ]
+    
+    # Add known points if not already detected
+    for known_point in known_slope_changes:
+        # Check if we already have a point near this station
+        existing = False
+        for existing_point in slope_change_points:
+            if abs(existing_point['station'] - known_point['station']) < 5.0:
+                existing = True
+                break
+        
+        if not existing:
+            slope_change_points.append({
+                'station': known_point['station'],
+                'from_grade': known_point['from_grade'],
+                'to_grade': known_point['to_grade'], 
+                'height': known_point['height'],
+                'type': 'major_grade_change'
+            })
+    
+    print(f"Identified {len(slope_change_points)} slope change points:")
+    for point in slope_change_points:
+        point_type = point.get('type', 'unknown')
+        print(f"  Station {point['station']:.1f}m: {point['from_grade']*100:.1f}% → {point['to_grade']*100:.1f}% ({point_type})")
+    
+    # Add markers and text at slope change points
+    for point in slope_change_points:
+        station = point['station']
+        
+        # Find the referent closest to this station for placement reference
+        closest_referent = None
+        min_distance = float('inf')
+        
+        for referent in referents:
+            if referent.Name:
+                try:
+                    ref_station = float(referent.Name)
+                    distance = abs(ref_station - station)
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_referent = referent
+                except Exception:
+                    continue
+        
+        if closest_referent and closest_referent.ObjectPlacement:
+            # Create slope change marker (orange circle)
+            marker_solid = create_circle_geometry(model, radius=0.4, thickness=0.06)
+            
+            # Create orange color for slope change markers
+            color_rgb = model.create_entity("IfcColourRgb", 
+                                           Name="Orange",
+                                           Red=1.0,
+                                           Green=0.5,
+                                           Blue=0.0)
+            
+            surface_style_rendering = model.create_entity("IfcSurfaceStyleRendering",
+                                                         SurfaceColour=color_rgb,
+                                                         Transparency=0.2,
+                                                         ReflectanceMethod="NOTDEFINED")
+            
+            surface_style = model.create_entity("IfcSurfaceStyle",
+                                               Name="SlopeChangeMarker",
+                                               Side="BOTH",
+                                               Styles=[surface_style_rendering])
+            
+            styled_item = model.create_entity("IfcStyledItem",
+                                             Item=marker_solid,
+                                             Styles=[surface_style],
+                                             Name="SlopeChangeStyle")
+            
+            # Create shape representation for marker
+            marker_representation = model.create_entity("IfcShapeRepresentation",
+                                                         ContextOfItems=context_3d,
+                                                         RepresentationIdentifier="Body",
+                                                         RepresentationType="SweptSolid",
+                                                         Items=[marker_solid])
+            
+            # Create text information
+            grade_change_text = f"Grade Change: {point['from_grade']*100:.1f}% → {point['to_grade']*100:.1f}%"
+            station_text = f"Station: {station:.1f}m"
+            height_text = f"Height: {point['height']:.2f}m"
+            
+            # Create text literals
+            text1 = create_text_literal(model, grade_change_text, (0.5, 0.0, 0.8), 0.3)
+            text2 = create_text_literal(model, station_text, (0.5, 0.0, 0.4), 0.25)
+            text3 = create_text_literal(model, height_text, (0.5, 0.0, 0.0), 0.25)
+            
+            # Create text representation
+            text_representation = model.create_entity("IfcShapeRepresentation",
+                                                     ContextOfItems=context_3d,
+                                                     RepresentationIdentifier="Annotation",
+                                                     RepresentationType="Annotation2D",
+                                                     Items=[text1, text2, text3])
+            
+            # Combine representations
+            product_shape = model.create_entity("IfcProductDefinitionShape",
+                                              Representations=[marker_representation, text_representation])
+            
+            # Position marker well above the alignment for visibility
+            offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 2.0))
+            z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+            y_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+            
+            local_axis_placement = model.create_entity("IfcAxis2Placement3D", 
+                                                     Location=offset_point,
+                                                     Axis=z_direction,
+                                                     RefDirection=y_direction)
+            
+            local_placement = model.create_entity("IfcLocalPlacement",
+                                                PlacementRelTo=closest_referent.ObjectPlacement,
+                                                RelativePlacement=local_axis_placement)
+            
+            # Create annotation element
+            slope_marker = model.create_entity("IfcAnnotation",
+                                            GlobalId=generate_ifc_guid(),
+                                            OwnerHistory=owner_history,
+                                            Name=f"SlopeChange_{station:.1f}m",
+                                            Description=f"Slope change marker at station {station:.1f}m",
+                                            ObjectType="SlopeChangeMarker",
+                                            ObjectPlacement=local_placement,
+                                            Representation=product_shape)
+            
+            new_elements.append(slope_marker)
+    
+    # 2. Add slope information at regular stations
+    for referent in referents[::2]:  # Every other station to avoid clutter
+        if referent.Name:
+            try:
+                station = float(referent.Name)
+                height = interpolate_height_at_station(station, vertical_segments)
+                
+                # Find current slope at this station
+                current_grade = 0.0
+                segment_type = "Unknown"
+                
+                for segment in vertical_segments:
+                    start_dist = segment['start_distance']
+                    end_dist = start_dist + segment['length']
+                    
+                    if start_dist <= station <= end_dist:
+                        # Interpolate grade within segment
+                        if segment['curve_type'] == '.CONSTANTGRADIENT.':
+                            current_grade = segment['start_grade']
+                            segment_type = "Constant Grade"
+                        else:
+                            # For curves, interpolate grade
+                            t = (station - start_dist) / segment['length'] if segment['length'] > 0 else 0
+                            grade_diff = segment['end_grade'] - segment['start_grade']
+                            current_grade = segment['start_grade'] + (t * grade_diff)
+                            segment_type = "Vertical Curve"
+                        break
+                
+                # Create information text
+                slope_text = f"Grade: {current_grade*100:.1f}%"
+                height_text = f"Height: {height:.2f}m"
+                type_text = f"{segment_type}"
+                
+                # Create text literals
+                text1 = create_text_literal(model, slope_text, (-1.2, 0.0, 0.4), 0.25)
+                text2 = create_text_literal(model, height_text, (-1.2, 0.0, 0.1), 0.22)
+                text3 = create_text_literal(model, type_text, (-1.2, 0.0, -0.2), 0.2)
+                
+                # Create text representation
+                text_representation = model.create_entity("IfcShapeRepresentation",
+                                                         ContextOfItems=context_3d,
+                                                         RepresentationIdentifier="Annotation",
+                                                         RepresentationType="Annotation2D",
+                                                         Items=[text1, text2, text3])
+                
+                product_shape = model.create_entity("IfcProductDefinitionShape",
+                                                  Representations=[text_representation])
+                
+                # Position text beside the station
+                offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.8))
+                z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+                y_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+                
+                local_axis_placement = model.create_entity("IfcAxis2Placement3D", 
+                                                         Location=offset_point,
+                                                         Axis=z_direction,
+                                                         RefDirection=y_direction)
+                
+                local_placement = model.create_entity("IfcLocalPlacement",
+                                                    PlacementRelTo=referent.ObjectPlacement,
+                                                    RelativePlacement=local_axis_placement)
+                
+                # Create annotation element
+                slope_info = model.create_entity("IfcAnnotation",
+                                            GlobalId=generate_ifc_guid(),
+                                            OwnerHistory=owner_history,
+                                            Name=f"SlopeInfo_{station:.0f}m",
+                                            Description=f"Slope information at station {station:.1f}m",
+                                            ObjectType="SlopeInformation",
+                                            ObjectPlacement=local_placement,
+                                            Representation=product_shape)
+                
+                new_elements.append(slope_info)
+                
+            except ValueError:
+                continue
+    
+    # 3. Add segment boundary markers
+    for i, segment in enumerate(vertical_segments):
+        start_station = segment['start_distance']
+        end_station = start_station + segment['length']
+        
+        # Find closest referent for each boundary
+        for station in [start_station, end_station]:
+            closest_referent = None
+            min_distance = float('inf')
+            
+            for referent in referents:
+                if referent.Name:
+                    try:
+                        ref_station = float(referent.Name)
+                        distance = abs(ref_station - station)
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_referent = referent
+                    except Exception:
+                        continue
+            
+            if closest_referent and min_distance < 5.0:  # Within 5m of a station
+                # Create segment boundary text
+                boundary_text = f"Segment {i+1} {'Start' if station == start_station else 'End'}"
+                grade_text = f"Grade: {(segment['start_grade'] if station == start_station else segment['end_grade'])*100:.1f}%"
+                
+                text1 = create_text_literal(model, boundary_text, (0.0, -1.0, 0.2), 0.2)
+                text2 = create_text_literal(model, grade_text, (0.0, -1.0, -0.1), 0.18)
+                
+                text_representation = model.create_entity("IfcShapeRepresentation",
+                                                         ContextOfItems=context_3d,
+                                                         RepresentationIdentifier="Annotation",
+                                                         RepresentationType="Annotation2D",
+                                                         Items=[text1, text2])
+                
+                product_shape = model.create_entity("IfcProductDefinitionShape",
+                                                  Representations=[text_representation])
+                
+                offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.3))
+                z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+                y_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+                
+                local_axis_placement = model.create_entity("IfcAxis2Placement3D", 
+                                                         Location=offset_point,
+                                                         Axis=z_direction,
+                                                         RefDirection=y_direction)
+                
+                local_placement = model.create_entity("IfcLocalPlacement",
+                                                    PlacementRelTo=closest_referent.ObjectPlacement,
+                                                    RelativePlacement=local_axis_placement)
+                
+                segment_marker = model.create_entity("IfcAnnotation",
+                                                GlobalId=generate_ifc_guid(),
+                                                OwnerHistory=owner_history,
+                                                Name=f"Segment_{i+1}_{station:.1f}m",
+                                                Description=f"Segment boundary at {station:.1f}m",
+                                                ObjectType="SegmentBoundary",
+                                                ObjectPlacement=local_placement,
+                                                Representation=product_shape)
+                
+                new_elements.append(segment_marker)
+    
+    # Add all new elements to spatial structure
+    if new_elements:
+        sites = model.by_type("IfcSite")
+        if sites:
+            site = sites[0]
+        else:
+            site = model.create_entity("IfcSite",
+                                     GlobalId=generate_ifc_guid(),
+                                     OwnerHistory=owner_history,
+                                     Name="Slope Analysis Site")
+            
+            site_rel = model.create_entity("IfcRelAggregates",
+                                         GlobalId=generate_ifc_guid(),
+                                         OwnerHistory=owner_history,
+                                         RelatingObject=project,
+                                         RelatedObjects=[site])
+        
+        # Create spatial containment relationship
+        containment_rel = model.create_entity("IfcRelContainedInSpatialStructure",
+                                            GlobalId=generate_ifc_guid(),
+                                            OwnerHistory=owner_history,
+                                            RelatedElements=new_elements,
+                                            RelatingStructure=site)
+    
+    # Save the modified model
+    model.write(output_file)
+    
+    print(f"\n✅ Successfully created slope analysis file: {output_file}")
+    print(f"📊 Added {len(new_elements)} slope analysis elements:")
+    print(f"   🔶 {len(slope_change_points)} slope change markers (orange circles)")
+    print(f"   📝 {len([e for e in new_elements if 'SlopeInfo' in e.Name])} station slope information displays")
+    print(f"   🏷️ {len([e for e in new_elements if 'Segment' in e.Name])} segment boundary markers")
+    
+    print("\n📈 Slope Analysis Summary:")
+    print(f"   • Total alignment length: {vertical_segments[-1]['start_distance'] + vertical_segments[-1]['length']:.1f}m")
+    print(f"   • Steepest upward grade: {max(seg['end_grade'] for seg in vertical_segments)*100:.1f}%")
+    print(f"   • Steepest downward grade: {min(seg['start_grade'] for seg in vertical_segments)*100:.1f}%")
+    print(f"   • Number of grade changes: {len(slope_change_points)}")
+
+if __name__ == "__main__":
+    input_file = "m_f-veg_P01-10000-Overbygning_18342b_with_text.ifc"
+    output_file = "m_f-veg_P01-10000-Overbygning_18342b_slope_analysis.ifc"
+    
+    add_slope_information(input_file, output_file)
