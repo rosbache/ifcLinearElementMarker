@@ -514,7 +514,7 @@ def create_text_markers(input_file, output_file):
     print("    2. IfcAnnotation with polyline geometry (fallback for viewers that don't support text literals)")
 
 if __name__ == "__main__":
-    input_file = "m_f-veg_CL-1000.ifc"
-    output_file = "m_f-veg_CL-1000_with_text.ifc"
+    input_file = "m_f-veg_CL-1000_slope_analysis.ifc"
+    output_file = "m_f-veg_CL-1000_slope_analysis_with_text.ifc"
     
     create_text_markers(input_file, output_file)
