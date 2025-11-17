@@ -207,30 +207,82 @@ Main function that:
 
 ## Customization
 
-### Adjust Marker Size
+All parameters are now easily configurable in the `__main__` section of each script. Simply edit the values at the top of the file before running.
+
+### create_text_markers.py - Configurable Parameters
+
+Edit the `USER CONFIGURABLE PARAMETERS` section at the bottom of `create_text_markers.py`:
+
 ```python
-# In create_text_markers() function
-triangle_geom = create_triangle_geometry(model, height=0.75, thickness=0.015)  # Larger
-circle_geom = create_circle_geometry(model, radius=0.75, thickness=0.015)      # Larger
+# Triangle Marker Settings (for intermediate stations)
+TRIANGLE_HEIGHT = 0.5           # Height in meters
+TRIANGLE_THICKNESS = 0.01       # Thickness in meters
+TRIANGLE_COLOR = (0.0, 0.8, 0.0)  # RGB (Green)
+
+# Circle Marker Settings (for start/end stations)
+CIRCLE_RADIUS = 0.5             # Radius in meters
+CIRCLE_THICKNESS = 0.01         # Thickness in meters
+CIRCLE_COLOR = (1.0, 0.0, 0.0)  # RGB (Red)
+
+# Text Settings
+TEXT_HEIGHT = 1.0               # Height in meters
+TEXT_WIDTH_FACTOR = 0.6         # Width-to-height ratio
+TEXT_COLOR = (0.0, 0.0, 0.0)    # RGB (Black)
+
+# Positioning Settings
+MARKER_HEIGHT_OFFSET = 0.5      # Vertical offset above alignment
+TEXT_POSITION_OFFSET = (0.0, 0.2, 0.0)  # XYZ offset for text
 ```
 
-### Change Colors
-```python
-# For triangles
-color_values = (0.0, 0.0, 1.0)  # Blue instead of green
+### add_slope_information.py - Configurable Parameters
 
-# For circles
-color_values = (1.0, 0.5, 0.0)  # Orange instead of red
+Edit the `USER CONFIGURABLE PARAMETERS` section at the bottom of `add_slope_information.py`:
+
+```python
+# Slope Change Marker Settings
+SLOPE_MARKER_RADIUS = 0.4           # Radius in meters
+SLOPE_MARKER_THICKNESS = 0.06       # Thickness in meters
+SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB (Orange)
+
+# Directional Arrow Settings
+ARROW_LENGTH = 0.6                  # Length in meters
+ARROW_WIDTH = 0.3                   # Width in meters
+ARROW_THICKNESS = 0.05              # Thickness in meters
+ARROW_COLOR_POSITIVE = (0.0, 0.8, 0.0)  # RGB (Green for upward)
+ARROW_COLOR_NEGATIVE = (1.0, 0.0, 0.0)  # RGB (Red for downward)
+
+# Text Settings
+TEXT_HEIGHT_LARGE = 0.6             # Large text height
+TEXT_HEIGHT_MEDIUM = 0.5            # Medium text height
+TEXT_HEIGHT_SMALL = 0.4             # Small text height
+TEXT_COLOR = (0.0, 0.0, 0.8)        # RGB (DarkBlue)
+TEXT_FONT = "Arial"                 # Font family
+
+# Positioning Settings
+SLOPE_MARKER_HEIGHT_OFFSET = 1.0    # Vertical offset for slope markers
+ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset for arrows
 ```
 
-### Adjust Vertical Offset
+### Example Customizations
+
+**Make Markers Larger and More Visible:**
 ```python
-marker_height = 1.0  # 1 meter above alignment instead of 0.5m
+TRIANGLE_HEIGHT = 1.0
+TRIANGLE_THICKNESS = 0.02
+CIRCLE_RADIUS = 1.0
+CIRCLE_THICKNESS = 0.02
+TEXT_HEIGHT = 1.5
 ```
 
-### Change Text Height
+**Change Color Scheme to Blue/Yellow:**
 ```python
-text_height = 1.0  # 1 meter tall text instead of 0.5m
+TRIANGLE_COLOR = (0.0, 0.0, 1.0)  # Blue
+CIRCLE_COLOR = (1.0, 1.0, 0.0)    # Yellow
+```
+
+**Position Markers Higher Above Alignment:**
+```python
+MARKER_HEIGHT_OFFSET = 1.5  # 1.5m instead of 0.5m
 ```
 
 ## Development History
