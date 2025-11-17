@@ -95,9 +95,24 @@ def create_directional_triangle(model, length=0.6, width=0.3, thickness=0.05):
     
     return extruded_solid
 
-def create_text_literal(model, text_content, position, height=0.4):
+def create_text_literal(model, text_content, position, height=0.4, color=(0.0, 0.0, 0.8), font="Arial"):
     """
     Create an IfcTextLiteral with specified position and content
+    
+    Parameters:
+    -----------
+    model : ifcopenshell model
+        The IFC model
+    text_content : str
+        Text to display
+    position : tuple
+        XYZ coordinates for text position
+    height : float
+        Text height in meters (default: 0.4)
+    color : tuple
+        RGB color for text (default: (0.0, 0.0, 0.8) - DarkBlue)
+    font : str
+        Font family (default: "Arial")
     """
     # Create text placement
     text_position = model.create_entity("IfcCartesianPoint", Coordinates=position)
@@ -116,10 +131,10 @@ def create_text_literal(model, text_content, position, height=0.4):
     
     # Create text style
     text_color = model.create_entity("IfcColourRgb",
-                                    Name="DarkBlue",
-                                    Red=0.0,
-                                    Green=0.0,
-                                    Blue=0.8)
+                                    Name="TextColor",
+                                    Red=color[0],
+                                    Green=color[1],
+                                    Blue=color[2])
     
     text_style = model.create_entity("IfcTextStyleForDefinedFont",
                                     Colour=text_color,
@@ -127,7 +142,7 @@ def create_text_literal(model, text_content, position, height=0.4):
     
     text_font_style = model.create_entity("IfcTextStyleFontModel",
                                          Name="SlopeFont",
-                                         FontFamily=["Arial"],
+                                         FontFamily=[font],
                                          FontStyle="normal",
                                          FontVariant="normal",
                                          FontWeight="bold",
@@ -189,9 +204,52 @@ def interpolate_height_at_station(station, vertical_segments):
     
     return 0.0
 
-def add_slope_information(input_file, output_file):
+def add_slope_information(input_file, output_file,
+                         slope_marker_radius=0.4, slope_marker_thickness=0.06, slope_marker_color=(1.0, 0.5, 0.0),
+                         arrow_length=0.6, arrow_width=0.3, arrow_thickness=0.05,
+                         arrow_color_positive=(0.0, 0.8, 0.0), arrow_color_negative=(1.0, 0.0, 0.0),
+                         text_height_large=0.6, text_height_medium=0.5, text_height_small=0.4,
+                         text_color=(0.0, 0.0, 0.8), text_font="Arial",
+                         slope_marker_height_offset=1.0, arrow_height_offset=0.8):
     """
     Add slope information, height data, and slope change markers to IFC alignment
+    
+    Parameters:
+    -----------
+    input_file : str
+        Path to input IFC file
+    output_file : str
+        Path to output IFC file
+    slope_marker_radius : float
+        Radius of slope change markers in meters (default: 0.4)
+    slope_marker_thickness : float
+        Thickness of slope change markers in meters (default: 0.06)
+    slope_marker_color : tuple
+        RGB color for slope change markers (default: (1.0, 0.5, 0.0) - Orange)
+    arrow_length : float
+        Length of directional arrow in meters (default: 0.6)
+    arrow_width : float
+        Width of directional arrow in meters (default: 0.3)
+    arrow_thickness : float
+        Thickness of directional arrow in meters (default: 0.05)
+    arrow_color_positive : tuple
+        RGB color for upward slope arrows (default: (0.0, 0.8, 0.0) - Green)
+    arrow_color_negative : tuple
+        RGB color for downward slope arrows (default: (1.0, 0.0, 0.0) - Red)
+    text_height_large : float
+        Height for large text in meters (default: 0.6)
+    text_height_medium : float
+        Height for medium text in meters (default: 0.5)
+    text_height_small : float
+        Height for small text in meters (default: 0.4)
+    text_color : tuple
+        RGB color for text (default: (0.0, 0.0, 0.8) - DarkBlue)
+    text_font : str
+        Font family for text (default: "Arial")
+    slope_marker_height_offset : float
+        Vertical offset for slope markers above centerline in meters (default: 1.0)
+    arrow_height_offset : float
+        Vertical offset for arrows above centerline in meters (default: 0.8)
     """
     # Open the IFC file
     model = ifcopenshell.open(input_file)
@@ -373,14 +431,14 @@ def add_slope_information(input_file, output_file):
         
         if base_referent and base_referent.ObjectPlacement:
             # Create slope change marker (orange circle)
-            marker_solid = create_circle_geometry(model, radius=0.4, thickness=0.06)
+            marker_solid = create_circle_geometry(model, radius=slope_marker_radius, thickness=slope_marker_thickness)
             
-            # Create orange color for slope change markers
+            # Create color for slope change markers
             color_rgb = model.create_entity("IfcColourRgb", 
                                            Name="Orange",
-                                           Red=1.0,
-                                           Green=0.5,
-                                           Blue=0.0)
+                                           Red=slope_marker_color[0],
+                                           Green=slope_marker_color[1],
+                                           Blue=slope_marker_color[2])
             
             surface_style_rendering = model.create_entity("IfcSurfaceStyleRendering",
                                                          SurfaceColour=color_rgb,
@@ -410,9 +468,9 @@ def add_slope_information(input_file, output_file):
             height_text = f"Height: {point['height']:.2f}m"
             
             # Create text literals
-            text1 = create_text_literal(model, grade_change_text, (0.5, 0.0, 0.8), 0.6)
-            text2 = create_text_literal(model, station_text, (0.5, 0.0, 0.4), 0.5)
-            text3 = create_text_literal(model, height_text, (0.5, 0.0, 0.0), 0.5)
+            text1 = create_text_literal(model, grade_change_text, (0.5, 0.0, 0.8), text_height_large, text_color, text_font)
+            text2 = create_text_literal(model, station_text, (0.5, 0.0, 0.4), text_height_medium, text_color, text_font)
+            text3 = create_text_literal(model, height_text, (0.5, 0.0, 0.0), text_height_medium, text_color, text_font)
             
             # Create text representation
             text_representation = model.create_entity("IfcShapeRepresentation",
@@ -450,7 +508,7 @@ def add_slope_information(input_file, output_file):
             offset_coords = (
                 station_offset * align_normalized[0],
                 station_offset * align_normalized[1],
-                1.0  # 1m above centerline
+                slope_marker_height_offset  # configurable height above centerline
             )
             offset_point = model.create_entity("IfcCartesianPoint", Coordinates=offset_coords)
             
@@ -516,15 +574,15 @@ def add_slope_information(input_file, output_file):
                 
                 # Create directional triangle (arrow) pointing along alignment
                 # Color based on slope: green for positive (upward), red for negative (downward)
-                arrow_triangle = create_directional_triangle(model, length=0.6, width=0.3, thickness=0.05)
+                arrow_triangle = create_directional_triangle(model, length=arrow_length, width=arrow_width, thickness=arrow_thickness)
                 
                 # Determine color based on slope direction
                 if current_grade >= 0:
                     arrow_color_name = "Green"
-                    arrow_color_rgb = (0.0, 0.8, 0.0)
+                    arrow_color_rgb = arrow_color_positive
                 else:
                     arrow_color_name = "Red"
-                    arrow_color_rgb = (1.0, 0.0, 0.0)
+                    arrow_color_rgb = arrow_color_negative
                 
                 # Create color for the arrow
                 arrow_color = model.create_entity("IfcColourRgb",
@@ -556,9 +614,9 @@ def add_slope_information(input_file, output_file):
                                                           Items=[arrow_triangle])
                 
                 # Create text literals
-                text1 = create_text_literal(model, slope_text, (-1.2, 0.0, 0.4), 0.5)
-                text2 = create_text_literal(model, height_text, (-1.2, 0.0, 0.1), 0.45)
-                text3 = create_text_literal(model, type_text, (-1.2, 0.0, -0.2), 0.4)
+                text1 = create_text_literal(model, slope_text, (-1.2, 0.0, 0.4), text_height_medium, text_color, text_font)
+                text2 = create_text_literal(model, height_text, (-1.2, 0.0, 0.1), text_height_small, text_color, text_font)
+                text3 = create_text_literal(model, type_text, (-1.2, 0.0, -0.2), text_height_small, text_color, text_font)
                 
                 # Create text representation
                 text_representation = model.create_entity("IfcShapeRepresentation",
@@ -585,8 +643,8 @@ def add_slope_information(input_file, output_file):
                     align_normalized = (1.0, 0.0, 0.0)
                 
                 # Position arrow and text beside/above the station
-                # Arrow at 0.8m height, pointing in alignment direction
-                offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.8))
+                # Arrow at configurable height, pointing in alignment direction
+                offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, arrow_height_offset))
                 
                 # RefDirection = alignment direction (arrow points this way)
                 x_direction = model.create_entity("IfcDirection", DirectionRatios=align_normalized)
@@ -644,8 +702,8 @@ def add_slope_information(input_file, output_file):
                 boundary_text = f"Segment {i+1} {'Start' if station == start_station else 'End'}"
                 grade_text = f"Grade: {(segment['start_grade'] if station == start_station else segment['end_grade'])*100:.1f}%"
                 
-                text1 = create_text_literal(model, boundary_text, (0.0, -1.0, 0.2), 0.4)
-                text2 = create_text_literal(model, grade_text, (0.0, -1.0, -0.1), 0.35)
+                text1 = create_text_literal(model, boundary_text, (0.0, -1.0, 0.2), text_height_small, text_color, text_font)
+                text2 = create_text_literal(model, grade_text, (0.0, -1.0, -0.1), text_height_small, text_color, text_font)
                 
                 text_representation = model.create_entity("IfcShapeRepresentation",
                                                          ContextOfItems=context_3d,
@@ -720,7 +778,58 @@ def add_slope_information(input_file, output_file):
     print(f"   • Number of grade changes: {len(slope_change_points)}")
 
 if __name__ == "__main__":
+    # ============================================================================
+    # USER CONFIGURABLE PARAMETERS
+    # ============================================================================
+    # Modify these values to customize slope marker appearance and positioning
+    
+    # Input/Output Files
     input_file = "m_f-veg_CL-1000_with_text.ifc"
     output_file = "m_f-veg_CL-1000_with_text_slope_analysis.ifc"
     
-    add_slope_information(input_file, output_file)
+    # Slope Change Marker Settings (Orange circles at grade change points)
+    SLOPE_MARKER_RADIUS = 0.4           # Radius of slope change markers in meters
+    SLOPE_MARKER_THICKNESS = 0.06       # Thickness of slope change markers in meters
+    SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB color (Orange)
+    
+    # Directional Arrow Settings (Shows slope direction along alignment)
+    ARROW_LENGTH = 0.6                  # Length of arrow in meters
+    ARROW_WIDTH = 0.3                   # Width of arrow in meters
+    ARROW_THICKNESS = 0.05              # Thickness of arrow in meters
+    ARROW_COLOR_POSITIVE = (0.0, 0.8, 0.0)  # RGB color for upward slopes (Green)
+    ARROW_COLOR_NEGATIVE = (1.0, 0.0, 0.0)  # RGB color for downward slopes (Red)
+    
+    # Text Settings
+    TEXT_HEIGHT_LARGE = 0.6             # Height for large text (e.g., grade changes) in meters
+    TEXT_HEIGHT_MEDIUM = 0.5            # Height for medium text (e.g., stations) in meters
+    TEXT_HEIGHT_SMALL = 0.4             # Height for small text (e.g., segments) in meters
+    TEXT_COLOR = (0.0, 0.0, 0.8)        # RGB color (DarkBlue)
+    TEXT_FONT = "Arial"                 # Font family
+    
+    # Positioning Settings
+    SLOPE_MARKER_HEIGHT_OFFSET = 1.0    # Vertical offset for slope markers above centerline (meters)
+    ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset for arrows above centerline (meters)
+    
+    # ============================================================================
+    # END OF USER CONFIGURABLE PARAMETERS
+    # ============================================================================
+    
+    add_slope_information(
+        input_file, 
+        output_file,
+        slope_marker_radius=SLOPE_MARKER_RADIUS,
+        slope_marker_thickness=SLOPE_MARKER_THICKNESS,
+        slope_marker_color=SLOPE_MARKER_COLOR,
+        arrow_length=ARROW_LENGTH,
+        arrow_width=ARROW_WIDTH,
+        arrow_thickness=ARROW_THICKNESS,
+        arrow_color_positive=ARROW_COLOR_POSITIVE,
+        arrow_color_negative=ARROW_COLOR_NEGATIVE,
+        text_height_large=TEXT_HEIGHT_LARGE,
+        text_height_medium=TEXT_HEIGHT_MEDIUM,
+        text_height_small=TEXT_HEIGHT_SMALL,
+        text_color=TEXT_COLOR,
+        text_font=TEXT_FONT,
+        slope_marker_height_offset=SLOPE_MARKER_HEIGHT_OFFSET,
+        arrow_height_offset=ARROW_HEIGHT_OFFSET
+    )
