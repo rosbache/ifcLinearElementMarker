@@ -15,6 +15,7 @@ def generate_ifc_guid():
 def create_circle_geometry(model, radius=0.5, thickness=0.1):
     """
     Create a circular marker for slope change points - larger and more visible
+    Oriented vertically (in XZ plane) matching triangles and red circles
     """
     # Create circle profile centered at origin
     center = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0))
@@ -28,7 +29,52 @@ def create_circle_geometry(model, radius=0.5, thickness=0.1):
                                  ProfileName="SlopeChangeMarker",
                                  OuterCurve=circle)
     
-    # Create placement for extrusion - position in XY plane, extrude in Z
+    # Create placement for extrusion - map profile to XZ plane, extrude along Y
+    # This matches the orientation of triangles and red circles in create_text_markers.py
+    origin = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
+    # Axis (extrusion direction) along Y
+    axis_z = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+    # RefDirection (profile X direction) along X
+    axis_x = model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+    placement = model.create_entity("IfcAxis2Placement3D",
+                                   Location=origin,
+                                   Axis=axis_z,
+                                   RefDirection=axis_x)
+    
+    # Create extrusion direction (along Y for thickness - perpendicular to XZ profile plane)
+    extrusion_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+    
+    # Create extruded area solid - thicker for better visibility
+    extruded_solid = model.create_entity("IfcExtrudedAreaSolid",
+                                        SweptArea=profile,
+                                        Position=placement,
+                                        ExtrudedDirection=extrusion_direction,
+                                        Depth=thickness)
+    
+    return extruded_solid
+
+def create_directional_triangle(model, length=0.6, width=0.3, thickness=0.05):
+    """
+    Create a horizontal triangle pointing in the positive X direction (along alignment)
+    Triangle lies in XY plane, with tip pointing forward (+X), extruded in Z
+    Used to show slope direction along the alignment
+    """
+    # Create triangle profile in XY plane - tip points in +X direction
+    # Base perpendicular to alignment direction
+    p1 = model.create_entity("IfcCartesianPoint", Coordinates=(length, 0.0))  # Tip (front)
+    p2 = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, -width/2))  # Left back
+    p3 = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, width/2))   # Right back
+    
+    # Create closed polyline for triangle
+    polyline = model.create_entity("IfcPolyline", Points=[p1, p2, p3, p1])
+    
+    # Create arbitrary profile definition
+    profile = model.create_entity("IfcArbitraryClosedProfileDef",
+                                 ProfileType="AREA",
+                                 ProfileName="DirectionalArrow",
+                                 OuterCurve=polyline)
+    
+    # Create placement for extrusion - profile in XY plane, extrude along Z
     origin = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
     axis_z = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
     axis_x = model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
@@ -40,7 +86,7 @@ def create_circle_geometry(model, radius=0.5, thickness=0.1):
     # Create extrusion direction (along Z for thickness)
     extrusion_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
     
-    # Create extruded area solid - thicker for better visibility
+    # Create extruded area solid
     extruded_solid = model.create_entity("IfcExtrudedAreaSolid",
                                         SweptArea=profile,
                                         Position=placement,
@@ -194,6 +240,16 @@ def add_slope_information(input_file, output_file):
     referents = model.by_type("IfcReferent")
     print(f"Found {len(referents)} station referents")
     
+    # Build a map of referent stations for positioning
+    referent_map = {}
+    for ref in referents:
+        if ref.Name:
+            try:
+                station_val = float(ref.Name)
+                referent_map[station_val] = ref
+            except Exception:
+                pass
+    
     # Get project context
     project = model.by_type("IfcProject")[0]
     owner_history = model.by_type("IfcOwnerHistory")[0]
@@ -278,22 +334,44 @@ def add_slope_information(input_file, output_file):
     for point in slope_change_points:
         station = point['station']
         
-        # Find the referent closest to this station for placement reference
-        closest_referent = None
-        min_distance = float('inf')
+        # Find exact referent at this station or create placement at the correct position
+        exact_referent = referent_map.get(station)
         
-        for referent in referents:
-            if referent.Name:
-                try:
-                    ref_station = float(referent.Name)
-                    distance = abs(ref_station - station)
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_referent = referent
-                except Exception:
-                    continue
+        if not exact_referent:
+            # Find two referents that bracket this station
+            stations_below = [s for s in referent_map.keys() if s <= station]
+            stations_above = [s for s in referent_map.keys() if s > station]
+            
+            if stations_below and stations_above:
+                station_below = max(stations_below)
+                station_above = min(stations_above)
+                ref_below = referent_map[station_below]
+                ref_above = referent_map[station_above]
+                
+                # Use the closer referent as reference
+                if abs(station - station_below) < abs(station - station_above):
+                    base_referent = ref_below
+                    station_offset = station - station_below
+                else:
+                    base_referent = ref_above
+                    station_offset = station - station_above
+            elif stations_below:
+                # Use the last station below
+                station_below = max(stations_below)
+                base_referent = referent_map[station_below]
+                station_offset = station - station_below
+            elif stations_above:
+                # Use the first station above
+                station_above = min(stations_above)
+                base_referent = referent_map[station_above]
+                station_offset = station - station_above
+            else:
+                continue
+        else:
+            base_referent = exact_referent
+            station_offset = 0.0
         
-        if closest_referent and closest_referent.ObjectPlacement:
+        if base_referent and base_referent.ObjectPlacement:
             # Create slope change marker (orange circle)
             marker_solid = create_circle_geometry(model, radius=0.4, thickness=0.06)
             
@@ -332,9 +410,9 @@ def add_slope_information(input_file, output_file):
             height_text = f"Height: {point['height']:.2f}m"
             
             # Create text literals
-            text1 = create_text_literal(model, grade_change_text, (0.5, 0.0, 0.8), 0.3)
-            text2 = create_text_literal(model, station_text, (0.5, 0.0, 0.4), 0.25)
-            text3 = create_text_literal(model, height_text, (0.5, 0.0, 0.0), 0.25)
+            text1 = create_text_literal(model, grade_change_text, (0.5, 0.0, 0.8), 0.6)
+            text2 = create_text_literal(model, station_text, (0.5, 0.0, 0.4), 0.5)
+            text3 = create_text_literal(model, height_text, (0.5, 0.0, 0.0), 0.5)
             
             # Create text representation
             text_representation = model.create_entity("IfcShapeRepresentation",
@@ -347,10 +425,39 @@ def add_slope_information(input_file, output_file):
             product_shape = model.create_entity("IfcProductDefinitionShape",
                                               Representations=[marker_representation, text_representation])
             
-            # Position marker well above the alignment for visibility
-            offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 2.0))
+            # Get alignment direction from base referent
+            try:
+                rel_placement = base_referent.ObjectPlacement.RelativePlacement
+                if hasattr(rel_placement, 'RefDirection') and rel_placement.RefDirection:
+                    align_dir = rel_placement.RefDirection.DirectionRatios
+                    import math
+                    length = math.sqrt(align_dir[0]**2 + align_dir[1]**2 + align_dir[2]**2)
+                    align_normalized = (align_dir[0]/length, align_dir[1]/length, align_dir[2]/length)
+                    perp_dir = (-align_normalized[1], align_normalized[0], 0.0)
+                    perp_length = math.sqrt(perp_dir[0]**2 + perp_dir[1]**2)
+                    if perp_length > 0.001:
+                        perp_normalized = (perp_dir[0]/perp_length, perp_dir[1]/perp_length, 0.0)
+                    else:
+                        perp_normalized = (0.0, 1.0, 0.0)
+                else:
+                    align_normalized = (1.0, 0.0, 0.0)
+                    perp_normalized = (0.0, 1.0, 0.0)
+            except Exception:
+                align_normalized = (1.0, 0.0, 0.0)
+                perp_normalized = (0.0, 1.0, 0.0)
+            
+            # Position marker 1m above the centerline with station offset along alignment
+            offset_coords = (
+                station_offset * align_normalized[0],
+                station_offset * align_normalized[1],
+                1.0  # 1m above centerline
+            )
+            offset_point = model.create_entity("IfcCartesianPoint", Coordinates=offset_coords)
+            
+            # Y-axis points perpendicular to alignment (marker thickness direction)
+            y_direction = model.create_entity("IfcDirection", DirectionRatios=perp_normalized)
+            # Z-axis points up (marker height direction)
             z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
-            y_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
             
             local_axis_placement = model.create_entity("IfcAxis2Placement3D", 
                                                      Location=offset_point,
@@ -358,18 +465,19 @@ def add_slope_information(input_file, output_file):
                                                      RefDirection=y_direction)
             
             local_placement = model.create_entity("IfcLocalPlacement",
-                                                PlacementRelTo=closest_referent.ObjectPlacement,
+                                                PlacementRelTo=base_referent.ObjectPlacement,
                                                 RelativePlacement=local_axis_placement)
             
-            # Create annotation element
-            slope_marker = model.create_entity("IfcAnnotation",
+            # Create IfcBuildingElementProxy (same as triangles and red circles)
+            slope_marker = model.create_entity("IfcBuildingElementProxy",
                                             GlobalId=generate_ifc_guid(),
                                             OwnerHistory=owner_history,
                                             Name=f"SlopeChange_{station:.1f}m",
                                             Description=f"Slope change marker at station {station:.1f}m",
                                             ObjectType="SlopeChangeMarker",
                                             ObjectPlacement=local_placement,
-                                            Representation=product_shape)
+                                            Representation=product_shape,
+                                            PredefinedType="USERDEFINED")
             
             new_elements.append(slope_marker)
     
@@ -406,10 +514,51 @@ def add_slope_information(input_file, output_file):
                 height_text = f"Height: {height:.2f}m"
                 type_text = f"{segment_type}"
                 
+                # Create directional triangle (arrow) pointing along alignment
+                # Color based on slope: green for positive (upward), red for negative (downward)
+                arrow_triangle = create_directional_triangle(model, length=0.6, width=0.3, thickness=0.05)
+                
+                # Determine color based on slope direction
+                if current_grade >= 0:
+                    arrow_color_name = "Green"
+                    arrow_color_rgb = (0.0, 0.8, 0.0)
+                else:
+                    arrow_color_name = "Red"
+                    arrow_color_rgb = (1.0, 0.0, 0.0)
+                
+                # Create color for the arrow
+                arrow_color = model.create_entity("IfcColourRgb",
+                                                 Name=arrow_color_name,
+                                                 Red=arrow_color_rgb[0],
+                                                 Green=arrow_color_rgb[1],
+                                                 Blue=arrow_color_rgb[2])
+                
+                arrow_surface_style = model.create_entity("IfcSurfaceStyleRendering",
+                                                         SurfaceColour=arrow_color,
+                                                         Transparency=0.0,
+                                                         ReflectanceMethod="NOTDEFINED")
+                
+                arrow_style = model.create_entity("IfcSurfaceStyle",
+                                                 Name=f"{arrow_color_name}Arrow",
+                                                 Side="BOTH",
+                                                 Styles=[arrow_surface_style])
+                
+                arrow_styled_item = model.create_entity("IfcStyledItem",
+                                                       Item=arrow_triangle,
+                                                       Styles=[arrow_style],
+                                                       Name="ArrowStyle")
+                
+                # Create shape representation for the arrow
+                arrow_representation = model.create_entity("IfcShapeRepresentation",
+                                                          ContextOfItems=context_3d,
+                                                          RepresentationIdentifier="Body",
+                                                          RepresentationType="SweptSolid",
+                                                          Items=[arrow_triangle])
+                
                 # Create text literals
-                text1 = create_text_literal(model, slope_text, (-1.2, 0.0, 0.4), 0.25)
-                text2 = create_text_literal(model, height_text, (-1.2, 0.0, 0.1), 0.22)
-                text3 = create_text_literal(model, type_text, (-1.2, 0.0, -0.2), 0.2)
+                text1 = create_text_literal(model, slope_text, (-1.2, 0.0, 0.4), 0.5)
+                text2 = create_text_literal(model, height_text, (-1.2, 0.0, 0.1), 0.45)
+                text3 = create_text_literal(model, type_text, (-1.2, 0.0, -0.2), 0.4)
                 
                 # Create text representation
                 text_representation = model.create_entity("IfcShapeRepresentation",
@@ -418,32 +567,51 @@ def add_slope_information(input_file, output_file):
                                                          RepresentationType="Annotation2D",
                                                          Items=[text1, text2, text3])
                 
+                # Combine arrow and text representations
                 product_shape = model.create_entity("IfcProductDefinitionShape",
-                                                  Representations=[text_representation])
+                                                  Representations=[arrow_representation, text_representation])
                 
-                # Position text beside the station
+                # Get alignment direction from referent
+                try:
+                    rel_placement = referent.ObjectPlacement.RelativePlacement
+                    if hasattr(rel_placement, 'RefDirection') and rel_placement.RefDirection:
+                        align_dir = rel_placement.RefDirection.DirectionRatios
+                        import math
+                        length = math.sqrt(align_dir[0]**2 + align_dir[1]**2 + align_dir[2]**2)
+                        align_normalized = (align_dir[0]/length, align_dir[1]/length, align_dir[2]/length)
+                    else:
+                        align_normalized = (1.0, 0.0, 0.0)
+                except Exception:
+                    align_normalized = (1.0, 0.0, 0.0)
+                
+                # Position arrow and text beside/above the station
+                # Arrow at 0.8m height, pointing in alignment direction
                 offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.8))
+                
+                # RefDirection = alignment direction (arrow points this way)
+                x_direction = model.create_entity("IfcDirection", DirectionRatios=align_normalized)
+                # Z-axis points up
                 z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
-                y_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
                 
                 local_axis_placement = model.create_entity("IfcAxis2Placement3D", 
                                                          Location=offset_point,
                                                          Axis=z_direction,
-                                                         RefDirection=y_direction)
+                                                         RefDirection=x_direction)
                 
                 local_placement = model.create_entity("IfcLocalPlacement",
                                                     PlacementRelTo=referent.ObjectPlacement,
                                                     RelativePlacement=local_axis_placement)
                 
-                # Create annotation element
-                slope_info = model.create_entity("IfcAnnotation",
+                # Create IfcBuildingElementProxy for slope information (consistent with markers)
+                slope_info = model.create_entity("IfcBuildingElementProxy",
                                             GlobalId=generate_ifc_guid(),
                                             OwnerHistory=owner_history,
                                             Name=f"SlopeInfo_{station:.0f}m",
-                                            Description=f"Slope information at station {station:.1f}m",
+                                            Description=f"Slope information with directional arrow at station {station:.1f}m",
                                             ObjectType="SlopeInformation",
                                             ObjectPlacement=local_placement,
-                                            Representation=product_shape)
+                                            Representation=product_shape,
+                                            PredefinedType="USERDEFINED")
                 
                 new_elements.append(slope_info)
                 
@@ -476,8 +644,8 @@ def add_slope_information(input_file, output_file):
                 boundary_text = f"Segment {i+1} {'Start' if station == start_station else 'End'}"
                 grade_text = f"Grade: {(segment['start_grade'] if station == start_station else segment['end_grade'])*100:.1f}%"
                 
-                text1 = create_text_literal(model, boundary_text, (0.0, -1.0, 0.2), 0.2)
-                text2 = create_text_literal(model, grade_text, (0.0, -1.0, -0.1), 0.18)
+                text1 = create_text_literal(model, boundary_text, (0.0, -1.0, 0.2), 0.4)
+                text2 = create_text_literal(model, grade_text, (0.0, -1.0, -0.1), 0.35)
                 
                 text_representation = model.create_entity("IfcShapeRepresentation",
                                                          ContextOfItems=context_3d,
@@ -552,7 +720,7 @@ def add_slope_information(input_file, output_file):
     print(f"   • Number of grade changes: {len(slope_change_points)}")
 
 if __name__ == "__main__":
-    input_file = "m_f-veg_P01-10000-Overbygning_18342b_with_text.ifc"
-    output_file = "m_f-veg_P01-10000-Overbygning_18342b_slope_analysis.ifc"
+    input_file = "m_f-veg_CL-1000_with_text.ifc"
+    output_file = "m_f-veg_CL-1000_with_text_slope_analysis.ifc"
     
     add_slope_information(input_file, output_file)
