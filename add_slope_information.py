@@ -210,7 +210,8 @@ def add_slope_information(input_file, output_file,
                          arrow_color_positive=(0.0, 0.8, 0.0), arrow_color_negative=(1.0, 0.0, 0.0),
                          text_height_large=0.6, text_height_medium=0.5, text_height_small=0.4,
                          text_color=(0.0, 0.0, 0.8), text_font="Arial",
-                         slope_marker_height_offset=1.0, arrow_height_offset=0.8):
+                         slope_marker_height_offset=1.0, arrow_height_offset=0.8,
+                         property_set_name="Pset_SlopeInformation"):
     """
     Add slope information, height data, and slope change markers to IFC alignment
     
@@ -248,6 +249,10 @@ def add_slope_information(input_file, output_file,
         Font family for text (default: "Arial")
     slope_marker_height_offset : float
         Vertical offset for slope markers above centerline in meters (default: 1.0)
+    arrow_height_offset : float
+        Vertical offset for directional arrows above centerline in meters (default: 0.8)
+    property_set_name : str
+        Name of the property set attached to slope information arrows (default: "Pset_SlopeInformation")
     arrow_height_offset : float
         Vertical offset for arrows above centerline in meters (default: 0.8)
     """
@@ -537,6 +542,57 @@ def add_slope_information(input_file, output_file,
                                             Representation=product_shape,
                                             PredefinedType="USERDEFINED")
             
+            # Create property set with slope change data
+            slope_change_properties = [
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="StationNumber",
+                                   NominalValue=model.create_entity("IfcReal", wrappedValue=station)),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="FromGradePercent",
+                                   NominalValue=model.create_entity("IfcReal", wrappedValue=point['from_grade']*100)),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="ToGradePercent",
+                                   NominalValue=model.create_entity("IfcReal", wrappedValue=point['to_grade']*100)),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="FromGradeDecimal",
+                                   NominalValue=model.create_entity("IfcReal", wrappedValue=point['from_grade'])),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="ToGradeDecimal",
+                                   NominalValue=model.create_entity("IfcReal", wrappedValue=point['to_grade'])),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="GradeChange",
+                                   NominalValue=model.create_entity("IfcReal", wrappedValue=(point['to_grade'] - point['from_grade'])*100)),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="HeightAboveDatum",
+                                   NominalValue=model.create_entity("IfcLengthMeasure", wrappedValue=point['height'])),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="ChangeType",
+                                   NominalValue=model.create_entity("IfcLabel", wrappedValue=point.get('type', 'unknown'))),
+                
+                model.create_entity("IfcPropertySingleValue",
+                                   Name="MarkerColor",
+                                   NominalValue=model.create_entity("IfcLabel", wrappedValue="Orange"))
+            ]
+            
+            slope_change_pset = model.create_entity("IfcPropertySet",
+                                             GlobalId=generate_ifc_guid(),
+                                             OwnerHistory=owner_history,
+                                             Name=property_set_name,
+                                             HasProperties=slope_change_properties)
+            
+            model.create_entity("IfcRelDefinesByProperties",
+                               GlobalId=generate_ifc_guid(),
+                               OwnerHistory=owner_history,
+                               RelatedObjects=[slope_marker],
+                               RelatingPropertyDefinition=slope_change_pset)
+            
             new_elements.append(slope_marker)
     
     # 2. Add slope information at regular stations
@@ -671,6 +727,49 @@ def add_slope_information(input_file, output_file,
                                             Representation=product_shape,
                                             PredefinedType="USERDEFINED")
                 
+                # Create property set with slope data
+                properties = [
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="StationNumber",
+                                       NominalValue=model.create_entity("IfcReal", wrappedValue=station)),
+                    
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="GradePercent",
+                                       NominalValue=model.create_entity("IfcReal", wrappedValue=current_grade*100)),
+                    
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="GradeDecimal",
+                                       NominalValue=model.create_entity("IfcReal", wrappedValue=current_grade)),
+                    
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="HeightAboveDatum",
+                                       NominalValue=model.create_entity("IfcLengthMeasure", wrappedValue=height)),
+                    
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="SegmentType",
+                                       NominalValue=model.create_entity("IfcLabel", wrappedValue=segment_type)),
+                    
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="SlopeDirection",
+                                       NominalValue=model.create_entity("IfcLabel", wrappedValue="Upward" if current_grade >= 0 else "Downward")),
+                    
+                    model.create_entity("IfcPropertySingleValue",
+                                       Name="ArrowColor",
+                                       NominalValue=model.create_entity("IfcLabel", wrappedValue=arrow_color_name))
+                ]
+                
+                property_set = model.create_entity("IfcPropertySet",
+                                                 GlobalId=generate_ifc_guid(),
+                                                 OwnerHistory=owner_history,
+                                                 Name=property_set_name,
+                                                 HasProperties=properties)
+                
+                model.create_entity("IfcRelDefinesByProperties",
+                                   GlobalId=generate_ifc_guid(),
+                                   OwnerHistory=owner_history,
+                                   RelatedObjects=[slope_info],
+                                   RelatingPropertyDefinition=property_set)
+                
                 new_elements.append(slope_info)
                 
             except ValueError:
@@ -699,17 +798,30 @@ def add_slope_information(input_file, output_file,
             
             if closest_referent and min_distance < 5.0:  # Within 5m of a station
                 # Create segment boundary text
-                boundary_text = f"Segment {i+1} {'Start' if station == start_station else 'End'}"
-                grade_text = f"Grade: {(segment['start_grade'] if station == start_station else segment['end_grade'])*100:.1f}%"
+                # Offset Y position based on whether it's start or end to avoid overlap
+                is_start = (station == start_station)
+                y_offset = -0.5 if is_start else -1.0  # 0.5m apart
                 
-                text1 = create_text_literal(model, boundary_text, (0.0, -1.0, 0.2), text_height_small, text_color, text_font)
-                text2 = create_text_literal(model, grade_text, (0.0, -1.0, -0.1), text_height_small, text_color, text_font)
+                boundary_text = f"Segment {i+1} {'Start' if is_start else 'End'}"
+                grade_text = f"Grade: {(segment['start_grade'] if is_start else segment['end_grade'])*100:.1f}%"
+                
+                # Add station number only for start points
+                if is_start:
+                    station_text = f"Station: {station:.1f}m"
+                    text1 = create_text_literal(model, boundary_text, (0.0, y_offset, 0.5), text_height_small, text_color, text_font)
+                    text2 = create_text_literal(model, station_text, (0.0, y_offset, 0.2), text_height_small, text_color, text_font)
+                    text3 = create_text_literal(model, grade_text, (0.0, y_offset, -0.1), text_height_small, text_color, text_font)
+                    text_items = [text1, text2, text3]
+                else:
+                    text1 = create_text_literal(model, boundary_text, (0.0, y_offset, 0.2), text_height_small, text_color, text_font)
+                    text2 = create_text_literal(model, grade_text, (0.0, y_offset, -0.1), text_height_small, text_color, text_font)
+                    text_items = [text1, text2]
                 
                 text_representation = model.create_entity("IfcShapeRepresentation",
                                                          ContextOfItems=context_3d,
                                                          RepresentationIdentifier="Annotation",
                                                          RepresentationType="Annotation2D",
-                                                         Items=[text1, text2])
+                                                         Items=text_items)
                 
                 product_shape = model.create_entity("IfcProductDefinitionShape",
                                                   Representations=[text_representation])
@@ -789,12 +901,12 @@ if __name__ == "__main__":
     
     # Slope Change Marker Settings (Orange circles at grade change points)
     SLOPE_MARKER_RADIUS = 0.4           # Radius of slope change markers in meters
-    SLOPE_MARKER_THICKNESS = 0.06       # Thickness of slope change markers in meters
+    SLOPE_MARKER_THICKNESS = 0.05       # Thickness of slope change markers in meters
     SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB color (Orange)
     
     # Directional Arrow Settings (Shows slope direction along alignment)
-    ARROW_LENGTH = 0.6                  # Length of arrow in meters
-    ARROW_WIDTH = 0.3                   # Width of arrow in meters
+    ARROW_LENGTH = 0.5                  # Length of arrow in meters
+    ARROW_WIDTH = 0.25                   # Width of arrow in meters
     ARROW_THICKNESS = 0.05              # Thickness of arrow in meters
     ARROW_COLOR_POSITIVE = (0.0, 0.8, 0.0)  # RGB color for upward slopes (Green)
     ARROW_COLOR_NEGATIVE = (1.0, 0.0, 0.0)  # RGB color for downward slopes (Red)
@@ -807,8 +919,11 @@ if __name__ == "__main__":
     TEXT_FONT = "Arial"                 # Font family
     
     # Positioning Settings
-    SLOPE_MARKER_HEIGHT_OFFSET = 1.0    # Vertical offset for slope markers above centerline (meters)
+    SLOPE_MARKER_HEIGHT_OFFSET = 0.5    # Vertical offset for slope markers above centerline (meters)
     ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset for arrows above centerline (meters)
+    
+    # Property Set Settings
+    PROPERTY_SET_NAME = "Pset_SlopeInformation"  # Name of property set attached to slope arrows
     
     # ============================================================================
     # END OF USER CONFIGURABLE PARAMETERS
@@ -831,5 +946,6 @@ if __name__ == "__main__":
         text_color=TEXT_COLOR,
         text_font=TEXT_FONT,
         slope_marker_height_offset=SLOPE_MARKER_HEIGHT_OFFSET,
-        arrow_height_offset=ARROW_HEIGHT_OFFSET
+        arrow_height_offset=ARROW_HEIGHT_OFFSET,
+        property_set_name=PROPERTY_SET_NAME
     )
