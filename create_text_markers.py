@@ -152,9 +152,42 @@ def create_text_geometry(model, text_content, height=5.0, width_factor=0.6):
     
     return polylines
 
-def create_text_markers(input_file, output_file):
+def create_text_markers(input_file, output_file, 
+                       triangle_height=0.5, triangle_thickness=0.01, triangle_color=(0.0, 0.8, 0.0),
+                       circle_radius=0.5, circle_thickness=0.01, circle_color=(1.0, 0.0, 0.0),
+                       text_height=1.0, text_width_factor=0.6, text_color=(0.0, 0.0, 0.0),
+                       marker_height_offset=0.5, text_position_offset=(0.0, 0.2, 0.0)):
     """
     Create readable text objects at all IFCREFERENT locations displaying station values
+    
+    Parameters:
+    -----------
+    input_file : str
+        Path to input IFC file
+    output_file : str
+        Path to output IFC file
+    triangle_height : float
+        Height of triangle markers in meters (default: 0.5)
+    triangle_thickness : float
+        Thickness of triangle markers in meters (default: 0.01)
+    triangle_color : tuple
+        RGB color for triangle markers (default: (0.0, 0.8, 0.0) - Green)
+    circle_radius : float
+        Radius of circle markers in meters (default: 0.5)
+    circle_thickness : float
+        Thickness of circle markers in meters (default: 0.01)
+    circle_color : tuple
+        RGB color for circle markers (default: (1.0, 0.0, 0.0) - Red)
+    text_height : float
+        Height of text labels in meters (default: 1.0)
+    text_width_factor : float
+        Width factor for text characters (default: 0.6)
+    text_color : tuple
+        RGB color for text (default: (0.0, 0.0, 0.0) - Black)
+    marker_height_offset : float
+        Vertical offset for marker positioning in meters (default: 0.5)
+    text_position_offset : tuple
+        XYZ offset for text position (default: (0.0, 0.2, 0.0))
     """
     # Open the IFC file
     model = ifcopenshell.open(input_file)
@@ -219,17 +252,17 @@ def create_text_markers(input_file, output_file):
                 
                 # Create geometry based on station type
                 if is_start_or_end:
-                    # Create circle geometry (0.5m radius, 1 cm thick, vertical)
-                    marker_solid = create_circle_geometry(model, radius=0.5, thickness=0.01)
+                    # Create circle geometry (configurable radius and thickness, vertical)
+                    marker_solid = create_circle_geometry(model, radius=circle_radius, thickness=circle_thickness)
                     color_name = "Red"
-                    color_values = (1.0, 0.0, 0.0)
-                    marker_height = 0.5  # Circle radius for offset
+                    color_values = circle_color
+                    marker_height = circle_radius  # Circle radius for offset
                 else:
-                    # Create triangle geometry (0.5m high, 1 cm thick, vertical)
-                    marker_solid = create_triangle_geometry(model, height=0.5, thickness=0.01)
+                    # Create triangle geometry (configurable height and thickness, vertical)
+                    marker_solid = create_triangle_geometry(model, height=triangle_height, thickness=triangle_thickness)
                     color_name = "Green"
-                    color_values = (0.0, 0.8, 0.0)
-                    marker_height = 0.5  # Triangle height for offset
+                    color_values = triangle_color
+                    marker_height = triangle_height  # Triangle height for offset
                 
                 # Create color for the marker
                 color_rgb = model.create_entity("IfcColourRgb", 
@@ -262,11 +295,10 @@ def create_text_markers(input_file, output_file):
                                                              Items=[marker_solid])
                 
                 # Create text using both methods for maximum compatibility
-                text_height = 1.0
                 
                 # METHOD 1: IfcTextLiteral (modern approach, may not be visible in all viewers)
                 # Create text placement - position text next to marker
-                text_position = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.2, 0.0))
+                text_position = model.create_entity("IfcCartesianPoint", Coordinates=text_position_offset)
                 text_axis = model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
                 text_ref_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
                 text_placement = model.create_entity("IfcAxis2Placement3D",
@@ -281,14 +313,14 @@ def create_text_markers(input_file, output_file):
                                                    Path="RIGHT")
                 
                 # Create text style with font and size
-                text_color = model.create_entity("IfcColourRgb",
+                text_color_rgb = model.create_entity("IfcColourRgb",
                                                 Name="Black",
-                                                Red=0.0,
-                                                Green=0.0,
-                                                Blue=0.0)
+                                                Red=text_color[0],
+                                                Green=text_color[1],
+                                                Blue=text_color[2])
                 
                 text_style = model.create_entity("IfcTextStyleForDefinedFont",
-                                                Colour=text_color,
+                                                Colour=text_color_rgb,
                                                 BackgroundColour=None)
                 
                 text_font_style = model.create_entity("IfcTextStyleFontModel",
@@ -351,10 +383,10 @@ def create_text_markers(input_file, output_file):
                     # Default perpendicular direction
                     perp_normalized = (0.0, 1.0, 0.0)
                 
-                # Position marker above the line by marker_height
+                # Position marker above the line by marker_height_offset
                 # For triangles: base at line, tip above
                 # For circles: center at line level, extends up and down
-                offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, marker_height))
+                offset_point = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, marker_height_offset))
                 
                 # Create axis directions for proper orientation
                 # Y-axis points perpendicular to alignment (triangle thickness direction)
@@ -387,7 +419,7 @@ def create_text_markers(input_file, output_file):
                 text_elements.append(text_marker)
                 
                 # METHOD 2: Create separate IfcAnnotation for polyline text (fallback for viewers that don't support IfcTextLiteral)
-                text_polylines = create_text_geometry(model, display_text, text_height)
+                text_polylines = create_text_geometry(model, display_text, text_height, text_width_factor)
                 
                 if text_polylines:
                     # Create shape representation with the text polylines
@@ -429,11 +461,11 @@ def create_text_markers(input_file, output_file):
                     
                     model.create_entity("IfcPropertySingleValue",
                                        Name="TriangleHeight", 
-                                       NominalValue=model.create_entity("IfcLengthMeasure", wrappedValue=0.5)),
+                                       NominalValue=model.create_entity("IfcLengthMeasure", wrappedValue=triangle_height)),
                     
                     model.create_entity("IfcPropertySingleValue",
                                        Name="TriangleThickness", 
-                                       NominalValue=model.create_entity("IfcLengthMeasure", wrappedValue=0.01)),
+                                       NominalValue=model.create_entity("IfcLengthMeasure", wrappedValue=triangle_thickness)),
                     
                     model.create_entity("IfcPropertySingleValue",
                                        Name="MarkerType", 
@@ -503,18 +535,61 @@ def create_text_markers(input_file, output_file):
     print(f"\nSaved IFC file with markers to: {output_file}")
     print(f"Created {len(text_elements)} elements with text labels")
     print("\nStart and End stations have:")
-    print("  - RED circular markers (0.5m radius, 1 cm thick)")
+    print(f"  - RED circular markers ({circle_radius}m radius, {circle_thickness}m thick)")
     print("\nAll other stations have:")
-    print("  - GREEN triangular markers (0.5m high, 1 cm thick)")
+    print(f"  - GREEN triangular markers ({triangle_height}m high, {triangle_thickness}m thick)")
     print("\nAll markers:")
-    print("  - Positioned 0.5m above the alignment line")
+    print(f"  - Positioned {marker_height_offset}m above the alignment line")
     print("  - Oriented perpendicular to alignment direction")
-    print("  - Include 0.5m tall text labels (using TWO separate entities for compatibility):")
+    print(f"  - Include {text_height}m tall text labels (using TWO separate entities for compatibility):")
     print("    1. IfcTextLiteral with IfcTextStyle (modern, styled text - part of marker)")
     print("    2. IfcAnnotation with polyline geometry (fallback for viewers that don't support text literals)")
 
 if __name__ == "__main__":
+    # ============================================================================
+    # USER CONFIGURABLE PARAMETERS
+    # ============================================================================
+    # Modify these values to customize marker appearance and positioning
+    
+    # Input/Output Files
     input_file = "m_f-veg_CL-1000.ifc"
     output_file = "m_f-veg_CL-1000_with_text.ifc"
     
-    create_text_markers(input_file, output_file)
+    # Triangle Marker Settings (for intermediate stations)
+    TRIANGLE_HEIGHT = 0.5           # Height of triangle markers in meters
+    TRIANGLE_THICKNESS = 0.01       # Thickness of triangle markers in meters (1cm)
+    TRIANGLE_COLOR = (0.0, 0.8, 0.0)  # RGB color (Green)
+    
+    # Circle Marker Settings (for start/end stations)
+    CIRCLE_RADIUS = 0.5             # Radius of circle markers in meters
+    CIRCLE_THICKNESS = 0.01         # Thickness of circle markers in meters (1cm)
+    CIRCLE_COLOR = (1.0, 0.0, 0.0)  # RGB color (Red)
+    
+    # Text Settings
+    TEXT_HEIGHT = 1.0               # Height of text labels in meters
+    TEXT_WIDTH_FACTOR = 0.6         # Width-to-height ratio for text characters
+    TEXT_COLOR = (0.0, 0.0, 0.0)    # RGB color (Black)
+    
+    # Positioning Settings
+    MARKER_HEIGHT_OFFSET = 0.5      # Vertical offset for markers above alignment (meters)
+    TEXT_POSITION_OFFSET = (0.0, 0.2, 0.0)  # XYZ offset for text position relative to marker
+    
+    # ============================================================================
+    # END OF USER CONFIGURABLE PARAMETERS
+    # ============================================================================
+    
+    create_text_markers(
+        input_file, 
+        output_file,
+        triangle_height=TRIANGLE_HEIGHT,
+        triangle_thickness=TRIANGLE_THICKNESS,
+        triangle_color=TRIANGLE_COLOR,
+        circle_radius=CIRCLE_RADIUS,
+        circle_thickness=CIRCLE_THICKNESS,
+        circle_color=CIRCLE_COLOR,
+        text_height=TEXT_HEIGHT,
+        text_width_factor=TEXT_WIDTH_FACTOR,
+        text_color=TEXT_COLOR,
+        marker_height_offset=MARKER_HEIGHT_OFFSET,
+        text_position_offset=TEXT_POSITION_OFFSET
+    )
