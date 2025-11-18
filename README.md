@@ -1,8 +1,8 @@
-# IFC Station Markers Generator
+# IFC Alignment Marker System
 
-Automatically generate visual station markers and text labels along alignment centerlines in IFC files.
+Automatically generate visual station markers, text labels, and slope analysis along alignment centerlines in IFC files using an object-oriented Python architecture.
 
-This image show the result in Trimble Connect Online Viewer. The result in other viewers may be different due to different support of IfcAnnotation and IfcTextLiteral.
+This image shows the result in Trimble Connect Online Viewer. The result in other viewers may be different due to different support of IfcAnnotation and IfcTextLiteral.
 
 <img width="855" height="769" alt="image" src="https://github.com/user-attachments/assets/c524af4f-6d07-42a3-85f8-ba4c870ba6e9" />
 
@@ -15,26 +15,54 @@ This is the same file in BIMvision display IfcTextLiteral alongside the IfcAnnot
 
 ## Overview
 
-This project provides a Python script that reads an IFC file containing alignment data with `IfcReferent` objects and creates visible station markers with text labels. The script generates both geometric markers (triangles/circles) and text annotations at each station point.
+This project provides an object-oriented Python system that reads IFC files containing alignment data with `IfcReferent` objects and creates:
+- **Station markers** with text labels at each station point
+- **Slope analysis** with grade change markers and directional arrows (optional)
+
+The system uses a modular, extensible architecture with shared geometry classes and specialized processors.
 
 ## Features
 
+### Station Markers
+
 - **Dual Marker Types**:
-  - 🔺 **Green triangles** for intermediate stations (0.5m high, 1cm thick)
-  - 🔴 **Red circles** for start/end stations (0.5m radius, 1cm thick)
+  - 🔺 **Green triangles** for intermediate stations
+  - 🔴 **Red circles** for start/end stations
   
 - **Dual Text Representation** (maximum compatibility):
   - `IfcTextLiteral` with `IfcTextStyle` - Modern styled text for advanced viewers
   - `IfcAnnotation` with polyline geometry - Fallback for basic viewers
   
 - **Smart Positioning**:
-  - Markers positioned 0.5m above the alignment line
+  - Markers positioned above the alignment line
   - Automatic perpendicular orientation to alignment direction
-  - Text labels scaled to 0.5m height for visibility
+  - Configurable height offsets and dimensions
 
-- **Color Coded**:
-  - Start/End stations: Red circles
-  - Intermediate stations: Green triangles
+### Slope Analysis (Optional)
+
+- **Slope Change Detection**:
+  - 🟠 **Orange circles** at grade change points
+  - Automatic detection of transitions between constant grades and curves
+  - Support for known slope change points
+  
+- **Directional Arrows**:
+  - 🟢 **Green arrows** for positive (upward) slopes
+  - 🔴 **Red arrows** for negative (downward) slopes
+  - Arrows point along alignment direction with increasing stations
+  
+- **Comprehensive Information**:
+  - Grade percentages and decimal values
+  - Height above datum at each point
+  - Slope direction indicators
+  - Change type classification
+
+### Architecture
+
+- **Object-Oriented Design**: Modular classes with clear responsibilities
+- **Shared Geometry Module**: Reusable marker geometry classes
+- **Factory Pattern**: Centralized marker creation logic
+- **Configurable**: All parameters adjustable via configuration dictionaries
+- **Extensible**: Easy to add new marker types or analysis features
 
 ## Requirements
 
@@ -42,33 +70,126 @@ This project provides a Python script that reads an IFC file containing alignmen
 pip install ifcopenshell
 ```
 
-## Usage
+Python 3.6 or higher recommended.
 
-### Basic Usage
+## Quick Start
+
+### Basic Usage (Station Markers Only)
 
 ```python
-python create_text_markers.py
+python create_alignment_markers_oop.py
 ```
 
-The script will:
+This will:
 1. Read from `m_f-veg_CL-1000.ifc` (input file)
-2. Process all `IfcReferent` objects (station points)
-3. Create markers and text annotations
-4. Save to `m_f-veg_CL-1000_with_text.ifc` (output file)
+2. Create station markers (triangles and circles) with text labels
+3. Save to `m_f-veg_CL-1000_with_markers.ifc` (output file)
 
-### Customizing Input/Output Files
+### With Slope Analysis (Default)
 
-Edit the `__main__` section in `create_text_markers.py`:
+The script includes slope analysis by default. To disable it, edit the configuration:
 
 ```python
-if __name__ == "__main__":
-    input_file = "your_input_file.ifc"
-    output_file = "your_output_file.ifc"
-    
-    create_text_markers(input_file, output_file)
+# In create_alignment_markers_oop.py
+ADD_SLOPE_ANALYSIS = False  # Set to False to only create station markers
+```
+
+### Customizing Files
+
+Edit the configuration section in `create_alignment_markers_oop.py`:
+
+```python
+INPUT_FILE = "your_input_file.ifc"
+OUTPUT_FILE = "your_output_file.ifc"
+ADD_SLOPE_ANALYSIS = True  # Enable/disable slope analysis
+```
+
+## Configuration
+
+All parameters are easily configurable in the `USER CONFIGURABLE PARAMETERS` section at the bottom of `create_alignment_markers_oop.py`.
+
+### Station Marker Settings
+
+```python
+# Triangle Marker Settings (for intermediate stations)
+TRIANGLE_HEIGHT = 0.5           # Height of triangle markers in meters
+TRIANGLE_THICKNESS = 0.01       # Thickness of triangle markers in meters
+TRIANGLE_COLOR = (0.0, 0.8, 0.0)  # RGB color (Green)
+
+# Circle Marker Settings (for start/end stations)
+CIRCLE_RADIUS = 0.5             # Radius of circle markers in meters
+CIRCLE_THICKNESS = 0.01         # Thickness of circle markers in meters
+CIRCLE_COLOR = (1.0, 0.0, 0.0)  # RGB color (Red)
+
+# Text Settings
+TEXT_HEIGHT = 1.0               # Height of text labels in meters
+TEXT_WIDTH_FACTOR = 0.6         # Width-to-height ratio for text characters
+TEXT_COLOR = (0.0, 0.0, 0.0)    # RGB color (Black)
+
+# Positioning Settings
+MARKER_HEIGHT_OFFSET = 0.5      # Vertical offset for markers above alignment (meters)
+TEXT_POSITION_OFFSET = (0.0, 0.2, 0.0)  # XYZ offset for text position
+```
+
+### Slope Analysis Settings (when enabled)
+
+```python
+# Slope Change Marker Settings (Orange circles at grade change points)
+SLOPE_MARKER_RADIUS = 0.4           # Radius of slope change markers in meters
+SLOPE_MARKER_THICKNESS = 0.05       # Thickness of slope change markers in meters
+SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB color (Orange)
+SLOPE_MARKER_HEIGHT_OFFSET = 0.5    # Vertical offset above centerline (meters)
+
+# Directional Arrow Settings (Shows slope direction along alignment)
+ARROW_LENGTH = 0.5                  # Length of arrow in meters
+ARROW_WIDTH = 0.25                  # Width of arrow in meters
+ARROW_THICKNESS = 0.05              # Thickness of arrow in meters
+ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset above centerline (meters)
+
+# Slope Text Settings
+TEXT_HEIGHT_LARGE = 0.6             # Height for large text in meters
+TEXT_HEIGHT_MEDIUM = 0.5            # Height for medium text in meters
+TEXT_HEIGHT_SMALL = 0.4             # Height for small text in meters
+TEXT_COLOR_SLOPE = (0.0, 0.0, 0.8)  # RGB color for slope text (DarkBlue)
+TEXT_FONT = "Arial"                 # Font family
+
+# Detection Settings
+GRADE_CHANGE_THRESHOLD = 0.01  # Minimum grade change to detect (1%)
+
+# Known Slope Changes (optional)
+KNOWN_SLOPE_CHANGES = [
+    {'station': 28.36, 'from_grade': -0.03, 'to_grade': 0.0202, 'height': 2.93, 'type': 'known'},
+    # Add more known points as needed...
+]
+```
+
+### Example Customizations
+
+**Make Markers Larger and More Visible:**
+```python
+TRIANGLE_HEIGHT = 1.0
+TRIANGLE_THICKNESS = 0.02
+CIRCLE_RADIUS = 1.0
+CIRCLE_THICKNESS = 0.02
+TEXT_HEIGHT = 1.5
+```
+
+**Change Color Scheme:**
+```python
+TRIANGLE_COLOR = (0.0, 0.0, 1.0)  # Blue triangles
+CIRCLE_COLOR = (1.0, 1.0, 0.0)    # Yellow circles
+SLOPE_MARKER_COLOR = (1.0, 0.0, 1.0)  # Magenta slope markers
+```
+
+**Position Markers Higher Above Alignment:**
+```python
+MARKER_HEIGHT_OFFSET = 1.5      # 1.5m instead of 0.5m
+ARROW_HEIGHT_OFFSET = 2.0       # 2.0m for arrows
 ```
 
 ## Output
+
+### Station Markers
 
 The script generates **2 IFC elements per station**:
 
@@ -81,39 +202,103 @@ The script generates **2 IFC elements per station**:
    - Polyline-based text geometry (fallback)
    - Same positioning as marker
 
+### Slope Analysis Elements (when enabled)
+
+1. **Slope Change Markers** - Orange circles at grade change points
+   - IfcBuildingElementProxy with circular geometry
+   - Property set with grade change information
+   - Positioned at detected or known slope change locations
+
+2. **Directional Arrows** - Green/red arrows showing slope direction
+   - IfcBuildingElementProxy with arrow geometry
+   - Oriented along alignment direction
+   - Color indicates slope direction (green=upward, red=downward)
+   - Created at every other station
+
 ### Example Output
 
-For a file with 24 stations (0, 10, 20, ..., 220, 228.6):
-- **48 total elements** created (24 markers + 24 text annotations)
-- **2 red circles** at stations 0 and 228.6
-- **22 green triangles** at stations 10 through 220
+For a file with 24 stations and slope analysis enabled:
+- **48 station marker elements** (24 markers + 24 text annotations)
+  - 2 red circles at start/end stations
+  - 22 green triangles at intermediate stations
+- **18 slope analysis elements**
+  - 6 orange slope change markers
+  - 12 directional arrows (every other station)
 
 ## Marker Specifications
 
 ### Triangle Markers (Intermediate Stations)
-- **Height**: 0.5 meters (base at line, tip pointing up)
-- **Thickness**: 0.01 meters (1 cm)
-- **Color**: Green RGB(0.0, 0.8, 0.0)
+- **Height**: Configurable (default: 0.5 meters)
+- **Thickness**: Configurable (default: 0.01 meters)
+- **Color**: Green RGB(0.0, 0.8, 0.0) - configurable
 - **Orientation**: Perpendicular to alignment direction
-- **Position**: Base 0.5m above alignment
+- **Position**: Above alignment at configurable offset
 
 ### Circle Markers (Start/End Stations)
-- **Radius**: 0.5 meters
-- **Thickness**: 0.01 meters (1 cm)
-- **Color**: Red RGB(1.0, 0.0, 0.0)
+- **Radius**: Configurable (default: 0.5 meters)
+- **Thickness**: Configurable (default: 0.01 meters)
+- **Color**: Red RGB(1.0, 0.0, 0.0) - configurable
 - **Orientation**: Vertical plane
-- **Position**: Center 0.5m above alignment
+- **Position**: Above alignment at configurable offset
+
+### Slope Change Markers (Orange Circles)
+- **Radius**: Configurable (default: 0.4 meters)
+- **Thickness**: Configurable (default: 0.05 meters)
+- **Color**: Orange RGB(1.0, 0.5, 0.0) - configurable
+- **Orientation**: Perpendicular to alignment direction
+- **Position**: Above alignment at configurable offset
+
+### Directional Arrows (Slope Direction)
+- **Length**: Configurable (default: 0.5 meters)
+- **Width**: Configurable (default: 0.25 meters)
+- **Thickness**: Configurable (default: 0.05 meters)
+- **Color**: Green (upward slopes) or Red (downward slopes)
+- **Orientation**: Along alignment direction (points forward with increasing stations)
+- **Position**: Above alignment at configurable offset
 
 ### Text Labels
-- **Height**: 0.5 meters
+- **Height**: Configurable (default: 1.0 meters for station text)
 - **Font**: Arial (for IfcTextLiteral)
-- **Color**: Black
+- **Color**: Configurable (default: Black for stations, DarkBlue for slope info)
 - **Content**: Station value (e.g., "0", "10", "100", "228.6")
 - **Format**: Integer display for whole numbers, one decimal for fractional values
 
+## Architecture
+
+The system uses an object-oriented architecture with three main components:
+
+### 1. Core Geometry Module (`geometry_markers.py`)
+
+Shared geometry classes used by all marker types:
+
+- **`BaseMarker`** - Abstract base class for all marker geometries
+- **`TriangleMarker`** - Green triangular markers for intermediate stations
+- **`CircleMarker`** - Circular markers (red for start/end, orange for slope changes)
+- **`DirectionalArrow`** - Arrow geometry for slope direction indicators
+- **`MarkerElement`** - Wraps geometry with properties and IFC element creation
+- **`TextAnnotation`** - Creates polyline-based text rendering
+
+### 2. Main Application (`create_alignment_markers_oop.py`)
+
+Unified script for creating both station markers and slope analysis:
+
+- **`StationMarkerFactory`** - Creates station marker instances
+- **`SlopeMarkerFactory`** - Creates slope-related markers
+- **`SlopeChangeDetector`** - Analyzes vertical alignment and detects grade changes
+- **`PlacementCalculator`** - Calculates spatial placements and orientations
+- **`TextLiteralCreator`** - Creates IFC text representations
+- **`AlignmentMarkerProcessor`** - Main orchestration class
+
+### Key Design Patterns
+
+- **Factory Pattern**: Centralized marker creation
+- **Strategy Pattern**: Different placement strategies for different marker types
+- **Separation of Concerns**: Geometry separate from business logic
+- **Shared Utilities**: Reusable placement and text creation classes
+
 ## IFC Structure
 
-### Entities Created
+### Station Marker Entities
 
 **For Each Station:**
 
@@ -129,18 +314,43 @@ For a file with 24 stations (0, 10, 20, ..., 220, 228.6):
    - `IfcShapeRepresentation` (annotation type)
    - `IfcLocalPlacement` (same as marker)
 
+### Slope Analysis Entities
+
+**Slope Change Markers:**
+- `IfcBuildingElementProxy` with circular geometry
+- Property set including: FromGradePercent, ToGradePercent, GradeChange, HeightAboveDatum, ChangeType
+
+**Directional Arrows:**
+- `IfcBuildingElementProxy` with arrow geometry oriented along alignment
+- Property set including: GradePercent, GradeDecimal, SlopeDirection, HeightAboveDatum
+
 ### Property Sets
 
-Each marker includes `Pset_StationText` with:
+**Station Markers** include `Pset_StationText` with:
 - `StationValue` (Real) - Exact station value
 - `DisplayText` (Label) - Text shown on marker
-- `TextHeight` (LengthMeasure) - 0.5m
-- `TriangleHeight` or `CircleRadius` (LengthMeasure)
-- `TriangleThickness` or `CircleThickness` (LengthMeasure)
-- `MarkerType` (Label) - "TriangleMarker" or "CircleMarker"
+- `TextHeight` (LengthMeasure) - Configurable
+- `MarkerType` (Label) - "Triangle" or "Circle-End/Start"
+- `Height`/`Radius` and `Thickness` (LengthMeasure)
 - `Color` (Label) - "Green" or "Red"
 - `StationName` (Label) - Original referent name
-- `ViewDirection` (Label) - "TopDown"
+
+**Slope Change Markers** include `Pset_SlopeInformation` with:
+- `StationNumber` (Real) - Station location
+- `FromGradePercent` / `ToGradePercent` (Real) - Grade percentages
+- `FromGradeDecimal` / `ToGradeDecimal` (Real) - Grade as decimal
+- `GradeChange` (Real) - Change in grade (percent)
+- `HeightAboveDatum` (LengthMeasure) - Elevation
+- `ChangeType` (Label) - "curve", "transition", or "known"
+- `MarkerColor` (Label) - "Orange"
+
+**Directional Arrows** include `Pset_SlopeInformation` with:
+- `StationNumber` (Real) - Station location
+- `GradePercent` / `GradeDecimal` (Real) - Current grade
+- `HeightAboveDatum` (LengthMeasure) - Elevation
+- `SlopeDirection` (Label) - "Upward" or "Downward"
+- `ArrowColor` (Label) - "Green" or "Red"
+- `SegmentType` (Label) - "intermediate"
 
 ## Viewer Compatibility
 
@@ -156,146 +366,117 @@ Each marker includes `Pset_StationText` with:
 
 Both methods are created simultaneously, ensuring maximum compatibility.
 
+## Project Files
+
+### Main Scripts
+- **`create_alignment_markers_oop.py`** - Unified OOP script for station markers and slope analysis
+- **`geometry_markers.py`** - Shared geometry classes (triangles, circles, arrows, text)
+
+### Input/Output Files
+- **`m_f-veg_CL-1000.ifc`** - Example input IFC file with alignment data
+- **`m_f-veg_CL-1000_with_markers.ifc`** - Output file with markers and optional slope analysis
+
+### Documentation
+- **`README.md`** - This file (main documentation)
+- **`OOP_README.md`** - Detailed OOP architecture documentation
+- **`Station_Markers_Summary.md`** - Development history and implementation details
+
+## Advanced Usage
+
+### Using the System as a Library
+
+```python
+from create_alignment_markers_oop import create_alignment_markers
+
+# Custom configuration
+config = {
+    'triangle_height': 0.8,
+    'circle_radius': 0.6,
+    'marker_height_offset': 1.0,
+    'text_height': 1.2,
+    # ... other parameters
+}
+
+# Create markers with custom config
+create_alignment_markers(
+    input_file="my_alignment.ifc",
+    output_file="my_alignment_with_markers.ifc",
+    add_slope_analysis=True,
+    **config
+)
+```
+
+### Adding Custom Marker Types
+
+To extend the system with new marker types:
+
+1. **Create a new geometry class** in `geometry_markers.py`:
+```python
+class DiamondMarker(BaseMarker):
+    def create_geometry(self):
+        # Implement diamond shape
+        pass
+```
+
+2. **Add factory method** in `create_alignment_markers_oop.py`:
+```python
+def create_diamond_marker(self, station_value, placement):
+    geometry = DiamondMarker(self.model, ...)
+    marker_element = MarkerElement(...)
+    return marker_element
+```
+
+3. **Update processor logic** to use new marker type as needed.
+
+See `OOP_README.md` for detailed architecture documentation.
+
+## Benefits of Object-Oriented Design
+
+### Modularity
+- Geometry classes separated from business logic
+- Easy to test individual components
+- Clear responsibilities for each class
+
+### Extensibility
+- Add new marker types by extending `BaseMarker`
+- New analysis features without modifying existing code
+- Plugin-style architecture for future enhancements
+
+### Reusability
+- `geometry_markers.py` can be used in other IFC projects
+- Shared placement and text utilities
+- Factory pattern allows different configurations
+
+### Maintainability
+- Changes localized to specific classes
+- Clear interfaces and documentation
+- Type hints and docstrings throughout
+
 ## Technical Details
 
 ### Coordinate System
 - Uses existing `IfcReferent` placements as reference
-- Calculates perpendicular direction from alignment
-- Applies Z-offset for vertical positioning
+- Calculates alignment direction from referent RefDirection
+- Calculates perpendicular direction (90° rotation in XY plane)
+- Applies Z-offset for vertical positioning above alignment
 
 ### Geometry Generation
-- **Triangles**: `IfcArbitraryClosedProfileDef` with 3 vertices
-- **Circles**: `IfcCircle` with specified radius
-- **Extrusion**: 1cm thickness in perpendicular direction
-- **Text**: Character-by-character polyline generation
+- **Triangles**: `IfcArbitraryClosedProfileDef` with 3 vertices, extruded perpendicular to alignment
+- **Circles**: `IfcCircle` profile, extruded perpendicular to alignment (or along alignment for slope markers)
+- **Arrows**: Triangular profile pointing in +X direction, oriented along alignment for slope indicators
+- **Text**: Character-by-character polyline generation for fallback compatibility
+
+### Placement Strategies
+- **Station Markers**: RefDirection = perpendicular to alignment (markers stand across the line)
+- **Slope Change Circles**: RefDirection = perpendicular to alignment (vertical disks across the line)
+- **Directional Arrows**: RefDirection = along alignment (arrows point forward with increasing stations)
+- All use `PlacementRelTo` for relative positioning from referents
 
 ### Color Application
 - `IfcColourRgb` for RGB color definition
-- `IfcSurfaceStyleShading` for surface rendering
-- `IfcStyledItem` to apply color to geometry
-
-## Files
-
-- `create_text_markers.py` - Main script
-- `m_f-veg_CL-1000.ifc` - Input IFC file
-- `m_f-veg_CL-1000_with_text.ifc` - Output IFC file
-- `Station_Markers_Summary.md` - Detailed summary of implementation
-- `README.md` - This file
-
-## Script Functions
-
-### `generate_ifc_guid()`
-Generates unique IFC-compliant GUIDs for new entities.
-
-### `create_triangle_geometry(model, height=0.5, thickness=0.01)`
-Creates vertical triangle geometry with specified dimensions.
-
-### `create_circle_geometry(model, radius=0.5, thickness=0.01)`
-Creates circular disk geometry with specified dimensions.
-
-### `create_text_geometry(model, text_content, height=5.0, width_factor=0.6)`
-Generates polyline-based text characters for fallback rendering.
-
-### `create_text_markers(input_file, output_file)`
-Main function that:
-1. Loads IFC file
-2. Finds all `IfcReferent` objects
-3. Determines start/end stations (min/max values)
-4. Creates appropriate marker type
-5. Adds dual text representations
-6. Saves modified IFC file
-
-## Customization
-
-All parameters are now easily configurable in the `__main__` section of each script. Simply edit the values at the top of the file before running.
-
-### create_text_markers.py - Configurable Parameters
-
-Edit the `USER CONFIGURABLE PARAMETERS` section at the bottom of `create_text_markers.py`:
-
-```python
-# Triangle Marker Settings (for intermediate stations)
-TRIANGLE_HEIGHT = 0.5           # Height in meters
-TRIANGLE_THICKNESS = 0.01       # Thickness in meters
-TRIANGLE_COLOR = (0.0, 0.8, 0.0)  # RGB (Green)
-
-# Circle Marker Settings (for start/end stations)
-CIRCLE_RADIUS = 0.5             # Radius in meters
-CIRCLE_THICKNESS = 0.01         # Thickness in meters
-CIRCLE_COLOR = (1.0, 0.0, 0.0)  # RGB (Red)
-
-# Text Settings
-TEXT_HEIGHT = 1.0               # Height in meters
-TEXT_WIDTH_FACTOR = 0.6         # Width-to-height ratio
-TEXT_COLOR = (0.0, 0.0, 0.0)    # RGB (Black)
-
-# Positioning Settings
-MARKER_HEIGHT_OFFSET = 0.5      # Vertical offset above alignment
-TEXT_POSITION_OFFSET = (0.0, 0.2, 0.0)  # XYZ offset for text
-```
-
-### add_slope_information.py - Configurable Parameters
-
-Edit the `USER CONFIGURABLE PARAMETERS` section at the bottom of `add_slope_information.py`:
-
-```python
-# Slope Change Marker Settings
-SLOPE_MARKER_RADIUS = 0.4           # Radius in meters
-SLOPE_MARKER_THICKNESS = 0.06       # Thickness in meters
-SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB (Orange)
-
-# Directional Arrow Settings
-ARROW_LENGTH = 0.6                  # Length in meters
-ARROW_WIDTH = 0.3                   # Width in meters
-ARROW_THICKNESS = 0.05              # Thickness in meters
-ARROW_COLOR_POSITIVE = (0.0, 0.8, 0.0)  # RGB (Green for upward)
-ARROW_COLOR_NEGATIVE = (1.0, 0.0, 0.0)  # RGB (Red for downward)
-
-# Text Settings
-TEXT_HEIGHT_LARGE = 0.6             # Large text height
-TEXT_HEIGHT_MEDIUM = 0.5            # Medium text height
-TEXT_HEIGHT_SMALL = 0.4             # Small text height
-TEXT_COLOR = (0.0, 0.0, 0.8)        # RGB (DarkBlue)
-TEXT_FONT = "Arial"                 # Font family
-
-# Positioning Settings
-SLOPE_MARKER_HEIGHT_OFFSET = 1.0    # Vertical offset for slope markers
-ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset for arrows
-```
-
-### Example Customizations
-
-**Make Markers Larger and More Visible:**
-```python
-TRIANGLE_HEIGHT = 1.0
-TRIANGLE_THICKNESS = 0.02
-CIRCLE_RADIUS = 1.0
-CIRCLE_THICKNESS = 0.02
-TEXT_HEIGHT = 1.5
-```
-
-**Change Color Scheme to Blue/Yellow:**
-```python
-TRIANGLE_COLOR = (0.0, 0.0, 1.0)  # Blue
-CIRCLE_COLOR = (1.0, 1.0, 0.0)    # Yellow
-```
-
-**Position Markers Higher Above Alignment:**
-```python
-MARKER_HEIGHT_OFFSET = 1.5  # 1.5m instead of 0.5m
-```
-
-## Development History
-
-The script evolved through several iterations:
-1. Initial box-based markers
-2. Triangle geometry with orientation refinement
-3. Color coding for start/end stations
-4. IfcTextLiteral implementation with styling
-5. Polyline text fallback method
-6. Separation of text into IfcAnnotation entities (current version)
-
-See `Station_Markers_Summary.md` for complete development history.
+- `IfcSurfaceStyleRendering` for surface appearance
+- `IfcStyledItem` to apply styles to geometry
+- Transparency support for slope change markers
 
 ## License
 
@@ -304,10 +485,14 @@ This project is provided as-is for IFC alignment visualization purposes.
 ## Contributing
 
 To improve or extend functionality:
-1. Modify marker geometry in `create_triangle_geometry()` or `create_circle_geometry()`
-2. Enhance text rendering in `create_text_geometry()`
-3. Add new marker types for specific station conditions
+1. Add new marker types by extending `BaseMarker` class in `geometry_markers.py`
+2. Enhance slope detection algorithms in `SlopeChangeDetector`
+3. Add new analysis features to `AlignmentMarkerProcessor`
 4. Implement additional property sets for metadata
+5. Create unit tests for classes
+6. Add type hints and improve documentation
+
+For detailed architecture information, see `OOP_README.md`.
 
 ## Support
 
