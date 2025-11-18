@@ -1261,6 +1261,51 @@ class AlignmentMarkerProcessor:
             )
             
             elements.append(element)
+            
+            # Create text annotations for slope change
+            # Title text showing location
+            title_offset = self.config.get('text_position_offset', (0.0, 0.2, 0.0))
+            title_text_rep = self.text_creator.create_text_literal_representation(
+                f"Slope Change at {station:.1f}m",
+                position_offset=(title_offset[0], title_offset[1] - 0.2, title_offset[2] + 1.2),
+                height=self.config.get('text_height_large', 0.6),
+                color=self.config.get('text_color', (0.0, 0.0, 0.0))
+            )
+            
+            title_annotation = self.model.create_entity(
+                "IfcAnnotation",
+                GlobalId=generate_ifc_guid(),
+                OwnerHistory=self.owner_history,
+                Name=f"SlopeChangeTitle_{station:.1f}",
+                ObjectPlacement=marker_placement,
+                Representation=self.model.create_entity(
+                    "IfcProductDefinitionShape",
+                    Representations=[title_text_rep]
+                )
+            )
+            elements.append(title_annotation)
+            
+            # Grade change text showing transition
+            grade_change = (change['to_grade'] - change['from_grade']) * 100
+            grade_text_rep = self.text_creator.create_text_literal_representation(
+                f"Grade: {change['from_grade']*100:.1f}% → {change['to_grade']*100:.1f}% ({grade_change:+.1f}%)",
+                position_offset=(title_offset[0], title_offset[1] - 0.2, title_offset[2] + 0.8),
+                height=self.config.get('text_height_medium', 0.5),
+                color=self.config.get('text_color', (0.0, 0.0, 0.0))
+            )
+            
+            grade_annotation = self.model.create_entity(
+                "IfcAnnotation",
+                GlobalId=generate_ifc_guid(),
+                OwnerHistory=self.owner_history,
+                Name=f"SlopeChangeGrade_{station:.1f}",
+                ObjectPlacement=marker_placement,
+                Representation=self.model.create_entity(
+                    "IfcProductDefinitionShape",
+                    Representations=[grade_text_rep]
+                )
+            )
+            elements.append(grade_annotation)
         
         return elements
     
@@ -1327,6 +1372,29 @@ class AlignmentMarkerProcessor:
             )
             
             elements.append(element)
+            
+            # Create text annotation for grade percentage
+            text_offset = self.config.get('text_position_offset', (0.0, 0.2, 0.0))
+            
+            slope_text_rep = self.text_creator.create_text_literal_representation(
+                f"Grade: {grade*100:.1f}%",
+                position_offset=(text_offset[0], text_offset[1] - 0.2, text_offset[2] + 0.6),
+                height=self.config.get('text_height_medium', 0.5),
+                color=self.config.get('text_color', (0.0, 0.0, 0.0))
+            )
+            
+            slope_annotation = self.model.create_entity(
+                "IfcAnnotation",
+                GlobalId=generate_ifc_guid(),
+                OwnerHistory=self.owner_history,
+                Name=f"SlopeGradeText_{station:.1f}",
+                ObjectPlacement=arrow_placement,
+                Representation=self.model.create_entity(
+                    "IfcProductDefinitionShape",
+                    Representations=[slope_text_rep]
+                )
+            )
+            elements.append(slope_annotation)
         
         return elements
     
