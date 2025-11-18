@@ -1,6 +1,36 @@
 """
 Object-Oriented IFC Alignment Marker Creator
-Creates station markers with text annotations and optional slope analysis
+
+This module provides a comprehensive system for creating station markers and slope analysis
+along IFC alignment centerlines. It uses an object-oriented architecture with factory patterns,
+shared geometry classes, and modular components.
+
+Main Features:
+--------------
+- Station markers (triangles and circles) with text labels at referent points
+- Optional slope analysis with grade change detection and directional arrows
+- Dual text representation (IfcTextLiteral + polyline fallback) for viewer compatibility
+- Configurable marker sizes, colors, and positioning
+- Property sets with comprehensive metadata
+
+Architecture:
+-------------
+- Factory Pattern: Centralized marker creation via StationMarkerFactory and SlopeMarkerFactory
+- Shared Geometry: Reusable marker classes in geometry_markers.py module
+- Utility Classes: PlacementCalculator for spatial calculations, TextLiteralCreator for text
+- Main Processor: AlignmentMarkerProcessor orchestrates the entire workflow
+
+Usage:
+------
+    python create_alignment_markers_oop.py
+
+Configuration:
+--------------
+All parameters are configurable in the USER CONFIGURABLE PARAMETERS section at the bottom
+of this file. Set ADD_SLOPE_ANALYSIS = True/False to enable/disable slope analysis.
+
+Author: AFRY
+Date: 2025
 """
 import os
 import ifcopenshell
@@ -16,20 +46,33 @@ from geometry_markers import (
 # ============================================================================
 
 class StationMarkerFactory:
-    """Factory for creating different types of station markers"""
+    """
+    Factory class for creating station markers (triangles and circles).
+    
+    This factory creates geometric representations and annotation elements for stations
+    along an alignment. Each station gets:
+    - A triangle marker (green, perpendicular to alignment)
+    - A circle marker (red for start/end, green for intermediate stations)
+    - Text annotations showing station number, offset distance, and elevation
+    
+    Attributes:
+        model (ifcopenshell.file): The IFC file being modified
+        owner_history (IfcOwnerHistory): IFC ownership and history information
+        context_3d (IfcGeometricRepresentationContext): The 3D geometric context for shapes
+            
+    Example:
+        >>> factory = StationMarkerFactory(model, owner_history, context_3d)
+        >>> triangle = factory.create_triangle_marker(station_value=100.0, placement=...)
+    """
     
     def __init__(self, model, owner_history, context_3d):
         """
-        Initialize factory
+        Initialize the station marker factory.
         
-        Parameters:
-        -----------
-        model : ifcopenshell.file
-            The IFC model
-        owner_history : IfcOwnerHistory
-            IFC owner history
-        context_3d : IfcGeometricRepresentationContext
-            3D geometric context
+        Args:
+            model (ifcopenshell.file): The IFC file being modified
+            owner_history (IfcOwnerHistory): IFC ownership and history information
+            context_3d (IfcGeometricRepresentationContext): 3D geometric context for shape representation
         """
         self.model = model
         self.owner_history = owner_history
@@ -37,11 +80,32 @@ class StationMarkerFactory:
         
     def create_triangle_marker(self, station_value, placement, 
                                height=0.5, thickness=0.05, color=(0.0, 0.8, 0.0)):
-        """Create a triangle marker for intermediate stations"""
+        """
+        Create a triangular marker at a station point.
+        
+        Triangles mark station locations and are oriented perpendicular to the alignment.
+        They use green color to indicate normal station points.
+        
+        Args:
+            station_value (float): Distance along alignment in meters
+            placement (IfcLocalPlacement): Spatial placement for the marker (perpendicular to alignment)
+            height (float, optional): Height of triangle in meters. Defaults to 0.5m.
+            thickness (float, optional): Thickness of triangle in meters. Defaults to 0.05m.
+            color (tuple, optional): RGB color values (0-1 range). Defaults to green (0.0, 0.8, 0.0).
+            
+        Returns:
+            IfcAnnotation: The created annotation element with triangle geometry and properties
+            
+        Implementation:
+            - Creates triangle using TriangleMarker from geometry_markers module
+            - Applies color via IfcStyledItem
+            - Adds property set with station value, marker type, dimensions, and color
+            - Returns configured MarkerElement as IfcAnnotation
+        """
         geometry = TriangleMarker(self.model, height, thickness, color)
         marker_element = MarkerElement(self.model, geometry, self.owner_history, self.context_3d)
         
-        # Add standard properties
+        # Add property set with marker metadata
         marker_element.add_properties({
             "StationValue": station_value,
             "MarkerType": "Triangle",
@@ -55,11 +119,33 @@ class StationMarkerFactory:
     def create_circle_marker(self, station_value, placement,
                             radius=0.5, thickness=0.05, color=(1.0, 0.0, 0.0),
                             marker_type="End"):
-        """Create a circle marker for start/end stations"""
+        """
+        Create a circular marker at start/end stations or slope change points.
+        
+        Circles mark special locations: start of alignment, end of alignment, and slope changes.
+        Color indicates the type: red for start/end, orange for slope changes.
+        
+        Args:
+            station_value (float): Distance along alignment in meters
+            placement (IfcLocalPlacement): Spatial placement for the marker (perpendicular to alignment)
+            radius (float, optional): Radius of circle in meters. Defaults to 0.5m.
+            thickness (float, optional): Thickness of circle disk in meters. Defaults to 0.05m.
+            color (tuple, optional): RGB color values (0-1 range). Defaults to red (1.0, 0.0, 0.0).
+            marker_type (str, optional): Type identifier for properties. Defaults to "End".
+            
+        Returns:
+            IfcAnnotation: The created annotation element with circle geometry and properties
+            
+        Implementation:
+            - Creates circle using CircleMarker from geometry_markers module
+            - Applies color via IfcStyledItem
+            - Adds property set with station value, marker type, dimensions, and color
+            - Returns configured MarkerElement as IfcAnnotation
+        """
         geometry = CircleMarker(self.model, radius, thickness, color)
         marker_element = MarkerElement(self.model, geometry, self.owner_history, self.context_3d)
         
-        # Add standard properties
+        # Add property set with marker metadata
         marker_element.add_properties({
             "StationValue": station_value,
             "MarkerType": f"Circle-{marker_type}",
@@ -76,34 +162,65 @@ class StationMarkerFactory:
 # ============================================================================
 
 class SlopeChangeDetector:
-    """Detects slope change points in vertical alignment segments"""
+    """
+    Detects slope change points in vertical alignment segments.
+    
+    This class analyzes the vertical profile of an alignment to identify points where
+    the grade (slope) changes significantly. It processes vertical segments (constant
+    slope sections) and identifies transitions that exceed a threshold.
+    
+    The detector performs grade interpolation at referent points to provide accurate
+    slope values even when referent points don't align exactly with segment boundaries.
+    
+    Attributes:
+        vertical_segments (list): List of IfcAlignmentVerticalSegment entities
+        grade_change_threshold (float): Minimum grade change to detect (decimal, e.g., 0.01 = 1%)
+        
+    Example:
+        >>> detector = SlopeChangeDetector(vertical_segments, grade_change_threshold=0.01)
+        >>> changes = detector.detect_slope_changes(referent_data)
+        >>> for change in changes:
+        ...     print(f"Grade change at {change['station']}: {change['grade_before']} -> {change['grade_after']}")
+    """
     
     def __init__(self, vertical_segments, grade_change_threshold=0.01):
         """
-        Initialize slope change detector
+        Initialize slope change detector.
         
-        Parameters:
-        -----------
-        vertical_segments : list
-            List of vertical alignment segment dictionaries
-        grade_change_threshold : float
-            Minimum grade change to detect (default: 0.01 = 1%)
+        Args:
+            vertical_segments (list): List of IfcAlignmentVerticalSegment entities from the alignment
+            grade_change_threshold (float): Minimum grade change to detect in decimal form
+                                           (e.g., 0.01 represents 1% change)
         """
+        # Sort segments by distance to ensure proper sequential processing
         self.vertical_segments = sorted(vertical_segments, key=lambda x: x['start_distance'])
         self.grade_change_threshold = grade_change_threshold
         
     def detect_slope_changes(self):
         """
-        Detect all slope change points in the alignment
+        Detect all slope change points in the alignment.
+        
+        Analyzes vertical segments to find:
+        1. Grade changes within curved segments (parabolic vertical curves)
+        2. Grade changes between adjacent segments (transitions)
         
         Returns:
-        --------
-        list : List of slope change point dictionaries
+            list: List of slope change dictionaries, each containing:
+                - station (float): Distance along alignment in meters
+                - from_grade (float): Previous grade in decimal form
+                - to_grade (float): New grade in decimal form
+                - height (float): Elevation at the change point in meters
+                - type (str): Either 'curve' (within segment) or 'transition' (between segments)
+                
+        Algorithm:
+            - For each segment, check if start and end grades differ significantly
+            - For adjacent segments, check if end grade of previous differs from start grade of current
+            - Only records changes exceeding the threshold to filter noise
         """
         slope_changes = []
         
         for i, segment in enumerate(self.vertical_segments):
-            # Check for grade change within segment (curve)
+            # Check for grade change within segment (parabolic vertical curve)
             if abs(segment['start_grade'] - segment['end_grade']) > self.grade_change_threshold:
                 # Slope change at end of curve
                 end_station = segment['start_distance'] + segment['length']
@@ -117,7 +234,7 @@ class SlopeChangeDetector:
                     'type': 'curve'
                 })
             
-            # Check for grade change between adjacent segments
+            # Check for grade change between adjacent segments (tangent transitions)
             if i > 0:
                 prev_segment = self.vertical_segments[i-1]
                 current_start_grade = segment['start_grade']
@@ -136,21 +253,25 @@ class SlopeChangeDetector:
     
     def add_known_changes(self, slope_changes, known_changes):
         """
-        Add known slope changes if not already detected
+        Add known slope changes if not already detected.
         
-        Parameters:
-        -----------
-        slope_changes : list
-            Existing detected slope changes
-        known_changes : list
-            List of known slope change dictionaries
+        Merges manually specified slope changes with auto-detected ones, avoiding duplicates.
+        Useful for adding important changes that fall below the threshold or for validation.
+        
+        Args:
+            slope_changes (list): List of auto-detected slope changes
+            known_changes (list): List of manually specified slope changes with same dictionary structure
             
         Returns:
-        --------
-        list : Combined list of slope changes
+            list: Combined list with duplicates removed (based on station proximity)
+            
+        Implementation:
+            - Considers changes at the same station (within 0.01m) as duplicates
+            - Keeps auto-detected version if duplicate found
         """
+        # Add known changes that aren't already detected
         for known in known_changes:
-            # Check if already exists
+            # Check if a change at this station already exists (within 0.5m tolerance)
             exists = any(
                 abs(existing['station'] - known['station']) < 0.5
                 for existing in slope_changes
@@ -159,10 +280,29 @@ class SlopeChangeDetector:
             if not exists:
                 slope_changes.append(known)
         
+        # Return sorted by station for consistent ordering
         return sorted(slope_changes, key=lambda x: x['station'])
     
     def _calculate_height_at_station(self, station):
-        """Calculate height at specific station"""
+        """
+        Calculate elevation at a specific station along the alignment.
+        
+        Uses grade interpolation to find the height at any point along the alignment,
+        handling both constant gradient segments and parabolic vertical curves.
+        
+        Args:
+            station (float): Distance along alignment in meters
+            
+        Returns:
+            float: Elevation at the station in meters
+            
+        Algorithm:
+            - Finds segment containing the station
+            - For constant gradient: height = start_height + distance * grade
+            - For parabolic curves: uses quadratic interpolation between start and end grades
+            - Extrapolates beyond last segment using end grade
+        """
+        # Find the segment containing this station
         for segment in self.vertical_segments:
             start_dist = segment['start_distance']
             length = segment['length']
@@ -174,21 +314,23 @@ class SlopeChangeDetector:
                 start_grade = segment['start_grade']
                 end_grade = segment['end_grade']
                 
+                # Linear calculation for constant gradient
                 if segment['curve_type'] == '.CONSTANTGRADIENT.':
                     height = start_height + (distance_into_segment * start_grade)
                 else:
-                    # Parabolic interpolation for curves
+                    # Parabolic interpolation for curved segments
                     if length > 0:
-                        t = distance_into_segment / length
+                        t = distance_into_segment / length  # Normalized position (0 to 1)
                         grade_change = end_grade - start_grade
                         current_grade = start_grade + (grade_change * t)
+                        # Average grade method for parabolic curve
                         height = start_height + (distance_into_segment * (start_grade + current_grade) / 2)
                     else:
                         height = start_height
                 
                 return height
         
-        # Extrapolate from last segment
+        # Extrapolate from last segment if station is beyond alignment end
         if self.vertical_segments:
             last_segment = self.vertical_segments[-1]
             last_station = last_segment['start_distance'] + last_segment['length']
@@ -200,20 +342,34 @@ class SlopeChangeDetector:
 
 
 class SlopeMarkerFactory:
-    """Factory for creating slope-related markers"""
+    """
+    Factory class for creating slope analysis markers.
+    
+    Creates markers indicating slope changes and slope directions along an alignment:
+    - Orange circle markers at grade transition points
+    - Directional arrows (green upward, red downward) showing slope direction
+    
+    These markers help visualize the vertical profile characteristics of the alignment.
+    
+    Attributes:
+        model (ifcopenshell.file): The IFC file being modified
+        owner_history (IfcOwnerHistory): IFC ownership and history information
+        context_3d (IfcGeometricRepresentationContext): The 3D geometric context for shapes
+            
+    Example:
+        >>> factory = SlopeMarkerFactory(model, owner_history, context_3d)
+        >>> circle = factory.create_slope_change_marker(slope_change_dict)
+        >>> arrow = factory.create_directional_arrow(station=100.0, grade=0.05, height=10.0, is_upward=True)
+    """
     
     def __init__(self, model, owner_history, context_3d):
         """
-        Initialize factory
+        Initialize the slope marker factory.
         
-        Parameters:
-        -----------
-        model : ifcopenshell.file
-            The IFC model
-        owner_history : IfcOwnerHistory
-            IFC owner history
-        context_3d : IfcGeometricRepresentationContext
-            3D geometric context
+        Args:
+            model (ifcopenshell.file): The IFC file being modified
+            owner_history (IfcOwnerHistory): IFC ownership and history information
+            context_3d (IfcGeometricRepresentationContext): 3D geometric context for shape representation
         """
         self.model = model
         self.owner_history = owner_history
@@ -222,30 +378,42 @@ class SlopeMarkerFactory:
     def create_slope_change_marker(self, slope_change, radius=0.4, thickness=0.06,
                                    color=(1.0, 0.5, 0.0), pset_name="Pset_SlopeChange"):
         """
-        Create orange circle marker for slope change point
+        Create an orange circle marker at a slope change point.
         
-        Parameters:
-        -----------
-        slope_change : dict
-            Slope change information
-        radius : float
-            Marker radius
-        thickness : float
-            Marker thickness
-        color : tuple
-            RGB color (default: orange)
-        pset_name : str
-            Property set name
+        These markers highlight locations where the alignment grade changes, such as
+        transitions from one constant slope to another or at vertical curve endpoints.
+        
+        Args:
+            slope_change (dict): Slope change information containing:
+                - station (float): Distance along alignment in meters
+                - from_grade (float): Previous grade in decimal form
+                - to_grade (float): New grade in decimal form
+                - height (float): Elevation at change point in meters
+                - type (str): 'curve' or 'transition'
+            radius (float, optional): Marker radius in meters. Defaults to 0.4m.
+            thickness (float, optional): Marker thickness in meters. Defaults to 0.06m.
+            color (tuple, optional): RGB color values (0-1 range). Defaults to orange (1.0, 0.5, 0.0).
+            pset_name (str, optional): Property set name. Defaults to "Pset_SlopeChange".
             
         Returns:
-        --------
-        MarkerElement
+            MarkerElement: The created marker element with circle geometry and slope change properties
+            
+        Properties Added:
+            - StationNumber: Location along alignment
+            - FromGradePercent/ToGradePercent: Grades in percentage form
+            - FromGradeDecimal/ToGradeDecimal: Grades in decimal form
+            - GradeChange: Magnitude of change in percentage
+            - HeightAboveDatum: Elevation
+            - ChangeType: 'curve' or 'transition'
+            - MarkerColor: "Orange"
         """
         geometry = CircleMarker(self.model, radius, thickness, color)
         marker_element = MarkerElement(self.model, geometry, self.owner_history, self.context_3d)
         
-        # Add properties
+        # Calculate grade change for property
         grade_change = slope_change['to_grade'] - slope_change['from_grade']
+        
+        # Add comprehensive slope change properties
         marker_element.add_properties({
             "StationNumber": slope_change['station'],
             "FromGradePercent": slope_change['from_grade'] * 100,
@@ -264,37 +432,44 @@ class SlopeMarkerFactory:
                                 length=0.6, width=0.3, thickness=0.05,
                                 segment_type="intermediate", pset_name="Pset_SlopeInformation"):
         """
-        Create directional arrow showing slope direction
+        Create a directional arrow showing slope direction and magnitude.
         
-        Parameters:
-        -----------
-        station : float
-            Station number
-        grade : float
-            Grade value (decimal)
-        height : float
-            Elevation
-        is_upward : bool
-            True for positive slope, False for negative
-        length : float
-            Arrow length
-        width : float
-            Arrow width
-        thickness : float
-            Arrow thickness
-        segment_type : str
-            Type of segment (start, end, intermediate)
-        pset_name : str
-            Property set name
+        Arrows point along the alignment direction (forward with increasing stations).
+        Color indicates slope: green for upward (positive grade), red for downward (negative grade).
+        The arrow orientation is controlled by the placement RefDirection set to alignment direction.
+        
+        Args:
+            station (float): Distance along alignment in meters
+            grade (float): Grade value in decimal form (e.g., 0.05 = 5% upward slope)
+            height (float): Elevation at arrow location in meters
+            is_upward (bool, optional): True for positive slope (green), False for negative (red). Defaults to True.
+            length (float, optional): Arrow length in meters. Defaults to 0.6m.
+            width (float, optional): Arrow width in meters. Defaults to 0.3m.
+            thickness (float, optional): Arrow thickness in meters. Defaults to 0.05m.
+            segment_type (str, optional): Type identifier. Defaults to "intermediate".
+            pset_name (str, optional): Property set name. Defaults to "Pset_SlopeInformation".
             
         Returns:
-        --------
-        MarkerElement
+            MarkerElement: The created marker element with arrow geometry and slope properties
+            
+        Properties Added:
+            - StationNumber: Location along alignment
+            - GradePercent: Grade in percentage form
+            - GradeDecimal: Grade in decimal form
+            - SlopeDirection: "Upward" or "Downward"
+            - HeightAboveDatum: Elevation
+            - SegmentType: Segment classification
+            - MarkerColor: "Green" or "Red"
+            
+        Note:
+            The arrow geometry is created pointing in the +X direction. The placement's
+            RefDirection should be set to the alignment direction to orient it correctly.
         """
+        # Create arrow geometry with appropriate color
         geometry = DirectionalArrow(self.model, length, width, thickness, is_upward)
         marker_element = MarkerElement(self.model, geometry, self.owner_history, self.context_3d)
         
-        # Add properties
+        # Add comprehensive slope information properties
         marker_element.add_properties({
             "StationNumber": station,
             "GradePercent": grade * 100,
@@ -313,58 +488,90 @@ class SlopeMarkerFactory:
 # ============================================================================
 
 class PlacementCalculator:
-    """Utility class for spatial calculations"""
+    """
+    Utility class for calculating spatial placements and orientations.
+    
+    Provides static methods for:
+    - Extracting alignment direction from referent placements
+    - Calculating perpendicular directions for station markers
+    - Creating marker placements (perpendicular for circles/triangles)
+    - Creating arrow placements (aligned with centerline direction)
+    - Extracting 3D positions from IFC placement entities
+    
+    These calculations are essential for correctly orienting markers relative to the
+    alignment geometry, ensuring markers appear perpendicular or parallel as intended.
+    
+    All methods are static as they perform pure geometric calculations without state.
+    """
     
     @staticmethod
     def calculate_alignment_direction(placement):
         """
-        Calculate alignment direction from referent placement
+        Extract the alignment direction vector from a referent placement.
         
-        Parameters:
-        -----------
-        placement : IfcLocalPlacement
-            Referent placement
+        The alignment direction is the forward direction along the alignment centerline,
+        pointing in the direction of increasing stations. This is extracted from the
+        RefDirection of the referent's IfcAxis2Placement3D.
+        
+        Args:
+            placement (IfcLinearPlacement): The placement entity with PlacementRelTo referencing alignment
             
         Returns:
-        --------
-        tuple : (x, y, z) normalized alignment direction
+            tuple: Normalized 3D direction vector (x, y, z) pointing along the alignment,
+                   or (1.0, 0.0, 0.0) as default if extraction fails
+                   
+        Implementation:
+            - Follows PlacementRelTo chain to find IfcAxis2Placement3D
+            - Extracts RefDirection (alignment forward direction)
+            - Normalizes to unit vector
+            - Returns X-axis default if RefDirection is not defined
         """
         try:
+            # Navigate to the relative placement from referent
             rel_placement = placement.RelativePlacement
             if hasattr(rel_placement, 'RefDirection') and rel_placement.RefDirection:
                 align_dir = rel_placement.RefDirection.DirectionRatios
-                # Normalize
+                # Normalize to unit vector
                 length = math.sqrt(align_dir[0]**2 + align_dir[1]**2 + align_dir[2]**2)
                 if length > 0.001:
                     return (align_dir[0]/length, align_dir[1]/length, align_dir[2]/length)
         except Exception:
             pass
         
-        return (1.0, 0.0, 0.0)  # Default alignment direction
+        # Default alignment direction (X-axis)
+        return (1.0, 0.0, 0.0)
     
     @staticmethod
     def calculate_perpendicular_direction(placement):
         """
-        Calculate perpendicular direction to alignment from referent placement
+        Calculate perpendicular direction to alignment for station markers.
         
-        Parameters:
-        -----------
-        placement : IfcLocalPlacement
-            Referent placement
+        Computes a direction perpendicular to the alignment's forward direction in the
+        horizontal (XY) plane. This is used for orienting markers (triangles and circles)
+        so they stand perpendicular to the centerline.
+        
+        Args:
+            placement (IfcLinearPlacement): The placement entity with PlacementRelTo referencing alignment
             
         Returns:
-        --------
-        tuple : (x, y, z) normalized perpendicular direction
+            tuple: Normalized 3D direction vector (x, y, z) perpendicular to alignment,
+                   or (0.0, 1.0, 0.0) as default if extraction fails
+                   
+        Implementation:
+            - Extracts alignment direction from RefDirection
+            - Rotates 90° counterclockwise in XY plane: (dx, dy) -> (-dy, dx)
+            - Normalizes result to unit vector
+            - Z-component is always 0 (horizontal perpendicular)
         """
         try:
             rel_placement = placement.RelativePlacement
             if hasattr(rel_placement, 'RefDirection') and rel_placement.RefDirection:
                 align_dir = rel_placement.RefDirection.DirectionRatios
-                # Normalize
+                # Normalize alignment direction
                 length = math.sqrt(align_dir[0]**2 + align_dir[1]**2 + align_dir[2]**2)
                 align_normalized = (align_dir[0]/length, align_dir[1]/length, align_dir[2]/length)
                 
-                # Calculate perpendicular (rotate 90° in XY plane)
+                # Calculate perpendicular: rotate 90° counterclockwise in XY plane
                 perp_dir = (-align_normalized[1], align_normalized[0], 0.0)
                 perp_length = math.sqrt(perp_dir[0]**2 + perp_dir[1]**2)
                 
@@ -373,29 +580,40 @@ class PlacementCalculator:
         except Exception:
             pass
         
-        return (0.0, 1.0, 0.0)  # Default perpendicular
+        # Default perpendicular direction (Y-axis)
+        return (0.0, 1.0, 0.0)
     
     @staticmethod
     def create_marker_placement(model, referent_placement, height_offset=0.5):
         """
-        Create placement for marker above alignment
+        Create placement for station markers (triangles and circles) perpendicular to alignment.
         
-        Parameters:
-        -----------
-        model : ifcopenshell.file
-            The IFC model
-        referent_placement : IfcLocalPlacement
-            Base referent placement
-        height_offset : float
-            Vertical offset above centerline
+        Constructs an IfcLocalPlacement with:
+        - Location offset vertically above the alignment by height_offset
+        - Y-axis (RefDirection) oriented perpendicular to the alignment
+        - Z-axis pointing upward
+        - Placement relative to the referent placement
+        
+        This orientation makes triangles and circles stand perpendicular to the alignment,
+        like signs along a road.
+        
+        Args:
+            model (ifcopenshell.file): The IFC file
+            referent_placement (IfcLocalPlacement): Base placement at the station point
+            height_offset (float, optional): Vertical offset above alignment in meters. Defaults to 0.5m.
             
         Returns:
-        --------
-        IfcLocalPlacement
+            IfcLocalPlacement: Placement for the marker with perpendicular orientation
+            
+        Coordinate System:
+            - Origin: (0, 0, height_offset) relative to referent
+            - X-axis: Not explicitly set (derives from Y and Z)
+            - Y-axis (RefDirection): Perpendicular to alignment in horizontal plane
+            - Z-axis (Axis): Vertical (0, 0, 1)
         """
         perp_dir = PlacementCalculator.calculate_perpendicular_direction(referent_placement)
         
-        # Position marker above the line
+        # Position marker vertically above the alignment point
         offset_point = model.create_entity(
             "IfcCartesianPoint", 
             Coordinates=(0.0, 0.0, height_offset)
@@ -421,31 +639,46 @@ class PlacementCalculator:
     @staticmethod
     def create_arrow_placement(model, referent_placement, height_offset=0.8):
         """
-        Create placement for directional arrow along alignment
+        Create placement for directional arrows pointing along alignment direction.
         
-        Parameters:
-        -----------
-        model : ifcopenshell.file
-            The IFC model
-        referent_placement : IfcLocalPlacement
-            Base referent placement
-        height_offset : float
-            Vertical offset above centerline
+        Constructs an IfcLocalPlacement with:
+        - Location offset vertically above the alignment by height_offset
+        - X-axis (RefDirection) oriented along the alignment direction
+        - Z-axis pointing upward
+        - Placement relative to the referent placement
+        
+        This orientation makes arrows point forward along the centerline with increasing stations,
+        showing the slope direction.
+        
+        Args:
+            model (ifcopenshell.file): The IFC file
+            referent_placement (IfcLocalPlacement): Base placement at the station point
+            height_offset (float, optional): Vertical offset above alignment in meters. Defaults to 0.8m.
             
         Returns:
-        --------
-        IfcLocalPlacement
+            IfcLocalPlacement: Placement for the arrow with alignment direction orientation
+            
+        Coordinate System:
+            - Origin: (0, 0, height_offset) relative to referent
+            - X-axis (RefDirection): Along alignment forward direction
+            - Y-axis: Not explicitly set (derives from X and Z)
+            - Z-axis (Axis): Vertical (0, 0, 1)
+            
+        Note:
+            Arrow geometry is created pointing in +X direction, so setting RefDirection
+            to the alignment direction makes the arrow point correctly along the centerline.
         """
+        # Calculate the alignment direction vector
         align_dir = PlacementCalculator.calculate_alignment_direction(referent_placement)
         
-        # Position arrow above the line
+        # Position arrow vertically above the alignment point
         offset_point = model.create_entity(
             "IfcCartesianPoint", 
             Coordinates=(0.0, 0.0, height_offset)
         )
         
         # Orientation: X-axis along alignment direction, Z-axis up
-        # This makes the arrow point along the alignment
+        # This makes the arrow point along the alignment with increasing stations
         x_direction = model.create_entity("IfcDirection", DirectionRatios=align_dir)
         z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
         
@@ -464,7 +697,18 @@ class PlacementCalculator:
     
     @staticmethod
     def extract_position(placement):
-        """Extract XYZ position from placement"""
+        """
+        Extract 3D position coordinates from an IFC placement entity.
+        
+        Utility method to retrieve the (x, y, z) coordinates from a placement's
+        Location point. Handles extraction errors gracefully.
+        
+        Args:
+            placement (IfcLinearPlacement or IfcLocalPlacement): Placement entity
+            
+        Returns:
+            tuple: 3D coordinates (x, y, z) in meters, or (0.0, 0.0, 0.0) if extraction fails
+        """
         try:
             rel_placement = placement.RelativePlacement
             location = rel_placement.Location.Coordinates
@@ -474,18 +718,29 @@ class PlacementCalculator:
 
 
 class TextLiteralCreator:
-    """Creates IFC text literals with styling"""
+    """
+    Creates IFC text literals with styling for station labels.
+    
+    Provides methods to create text annotations that display station information.
+    Handles both IfcTextLiteral (standard IFC text) and polyline fallback
+    (for viewers that don't support text literals).
+    
+    Attributes:
+        model (ifcopenshell.file): The IFC file being modified
+        context_3d (IfcGeometricRepresentationContext): 3D geometric context for text placement
+        
+    Example:
+        >>> creator = TextLiteralCreator(model, context_3d)
+        >>> text_rep = creator.create_text_literal_representation("Station 100", height=1.0)
+    """
     
     def __init__(self, model, context_3d):
         """
-        Initialize text creator
+        Initialize text literal creator.
         
-        Parameters:
-        -----------
-        model : ifcopenshell.file
-            The IFC model
-        context_3d : IfcGeometricRepresentationContext
-            3D geometric context
+        Args:
+            model (ifcopenshell.file): The IFC file being modified
+            context_3d (IfcGeometricRepresentationContext): 3D geometric context for shape representation
         """
         self.model = model
         self.context_3d = context_3d
@@ -493,26 +748,30 @@ class TextLiteralCreator:
     def create_text_literal_representation(self, text, position_offset=(0.0, 0.2, 0.0),
                                           height=1.0, color=(0.0, 0.0, 0.0), weight="normal"):
         """
-        Create IfcTextLiteral representation
+        Create an IfcTextLiteral shape representation with styling.
         
-        Parameters:
-        -----------
-        text : str
-            Text content
-        position_offset : tuple
-            XYZ offset for text position
-        height : float
-            Text height in meters
-        color : tuple
-            RGB color values
-        weight : str
-            Font weight (normal/bold)
+        Creates styled 3D text that can be viewed in IFC viewers supporting text literals.
+        Includes font styling (height, weight) and color.
+        
+        Args:
+            text (str): Text content to display
+            position_offset (tuple, optional): XYZ offset for text position relative to marker.
+                                              Defaults to (0.0, 0.2, 0.0) - offset in Y direction.
+            height (float, optional): Text height in meters. Defaults to 1.0m.
+            color (tuple, optional): RGB color values (0-1 range). Defaults to black (0.0, 0.0, 0.0).
+            weight (str, optional): Font weight, "normal" or "bold". Defaults to "normal".
             
         Returns:
-        --------
-        IfcShapeRepresentation
+            IfcShapeRepresentation: Text representation with type "Annotation" and identifier "Annotation"
+            
+        Implementation:
+            - Creates IfcAxis2Placement3D for text orientation (X-axis right, Y-axis forward)
+            - Creates IfcTextLiteralWithExtent with box for text bounds
+            - Applies IfcTextStyleFontModel for font properties
+            - Applies IfcSurfaceStyleRendering for color
+            - Returns styled shape representation
         """
-        # Create text placement
+        # Create text placement: X-axis to the right, Y-axis forward
         text_position = self.model.create_entity("IfcCartesianPoint", Coordinates=position_offset)
         text_axis = self.model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
         text_ref_direction = self.model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
@@ -582,20 +841,25 @@ class TextLiteralCreator:
     
     def create_polyline_text_representation(self, text, height=1.0, width_factor=0.6):
         """
-        Create polyline-based text representation (fallback)
+        Create polyline-based text representation as fallback for non-supporting viewers.
         
-        Parameters:
-        -----------
-        text : str
-            Text content
-        height : float
-            Text height in meters
-        width_factor : float
-            Width-to-height ratio
+        Creates text using polyline curves instead of IfcTextLiteral. This provides better
+        compatibility with IFC viewers that don't support text literals, as all viewers
+        can display geometric curves.
+        
+        Args:
+            text (str): Text content to display
+            height (float, optional): Text height in meters. Defaults to 1.0m.
+            width_factor (float, optional): Width-to-height ratio for character spacing. Defaults to 0.6.
             
         Returns:
-        --------
-        IfcShapeRepresentation or None
+            IfcShapeRepresentation or None: Polyline representation with type "GeometricCurveSet",
+                                            or None if polyline generation fails
+                                            
+        Implementation:
+            - Uses TextAnnotation class from geometry_markers to generate polylines
+            - Each character is represented as a set of line segments
+            - Returns GeometricCurveSet representation for maximum compatibility
         """
         text_annotation = TextAnnotation(self.model, text, height, width_factor)
         polylines = text_annotation.create_polylines()
@@ -616,18 +880,44 @@ class TextLiteralCreator:
 # ============================================================================
 
 class AlignmentMarkerProcessor:
-    """Main processor for creating alignment markers and optional slope analysis"""
+    """
+    Main orchestrator for creating alignment markers and optional slope analysis.
+    
+    This class coordinates the entire workflow of:
+    1. Finding alignments in the IFC model
+    2. Extracting alignment geometry (horizontal, vertical, referent points)
+    3. Creating station markers (triangles and circles) with text annotations
+    4. Optionally detecting slope changes and creating slope markers
+    5. Assigning all markers to spatial structure
+    
+    The processor uses factory classes for marker creation and utility classes for
+    calculations, providing a clean separation of concerns.
+    
+    Attributes:
+        model (ifcopenshell.file): The IFC file being processed
+        config (dict): Configuration dictionary with all user settings
+        project (IfcProject): The IFC project entity
+        owner_history (IfcOwnerHistory): IFC ownership information
+        context_3d (IfcGeometricRepresentationContext): 3D context for geometry
+        station_factory (StationMarkerFactory): Factory for creating station markers
+        text_creator (TextLiteralCreator): Creator for text annotations
+        
+    Example:
+        >>> processor = AlignmentMarkerProcessor(model, config)
+        >>> processor.process_alignment(alignment, add_slope_analysis=True)
+    """
     
     def __init__(self, model, config):
         """
-        Initialize processor
+        Initialize the alignment marker processor.
         
-        Parameters:
-        -----------
-        model : ifcopenshell.file
-            The IFC model
-        config : dict
-            Configuration dictionary with all settings
+        Sets up the processor with necessary IFC entities and creates factory instances
+        for marker and text creation.
+        
+        Args:
+            model (ifcopenshell.file): The IFC model to process
+            config (dict): Configuration dictionary containing all user-defined parameters
+                          (marker sizes, offsets, text heights, colors, etc.)
         """
         self.model = model
         self.config = config
@@ -652,23 +942,41 @@ class AlignmentMarkerProcessor:
     def _get_3d_context(self):
         """Get 3D geometric representation context"""
         contexts = self.model.by_type("IfcGeometricRepresentationContext")
+        # Find the first 3D geometric context for shape representations
         for context in contexts:
             if hasattr(context, 'ContextType') and context.ContextType == '3D':
                 return context
+        # Fallback to first context if no 3D context found
         return contexts[0] if contexts else None
     
     def process_station_markers(self):
         """
-        Process all referents and create station markers
+        Process all referent points and create station markers with text annotations.
+        
+        This method:
+        1. Finds all IfcReferent entities (station points along the alignment)
+        2. Determines start and end stations for special circle marker placement
+        3. Creates triangle markers for intermediate stations
+        4. Creates circle markers for start and end stations
+        5. Adds text annotations showing station number, offset, and elevation
+        6. Adds both IfcTextLiteral and polyline fallback representations
         
         Returns:
-        --------
-        list : Created IFC elements
+            list: All created IFC elements (IfcBuildingElementProxy and IfcAnnotation)
+            
+        Station Marker Rules:
+            - Start station (minimum): Red circle marker
+            - End station (maximum): Red circle marker
+            - Intermediate stations: Green triangle markers
+            - All stations: Get text annotations with station info
+            
+        Text Content Format:
+            "Station XXX\\nOffset: YYY m\\nElevation: ZZZ m"
         """
         referents = self.model.by_type("IfcReferent")
         print(f"Found {len(referents)} IFCREFERENT objects")
         
-        # Determine start and end stations
+        # Determine start and end stations by finding min/max station values
         station_values = []
         for ref in referents:
             if ref.Name:
@@ -682,6 +990,7 @@ class AlignmentMarkerProcessor:
         
         created_elements = []
         
+        # Process each referent point to create markers
         for referent in referents:
             try:
                 elements = self._process_single_referent(
@@ -884,25 +1193,32 @@ class AlignmentMarkerProcessor:
     
     def process_slope_changes(self, slope_changes, referent_map):
         """
-        Create markers and text for slope change points
+        Create orange circle markers and text annotations for slope change points.
         
-        Parameters:
-        -----------
-        slope_changes : list
-            List of slope change dictionaries
-        referent_map : dict
-            Station to referent mapping
+        Processes detected slope changes to create visual markers indicating where
+        the alignment grade changes significantly. Each change gets:
+        - Orange circle marker positioned perpendicular to alignment
+        - Text annotation showing grade transition details
+        
+        Args:
+            slope_changes (list): List of slope change dictionaries from SlopeChangeDetector
+            referent_map (dict): Mapping from station values to IfcReferent entities
             
         Returns:
-        --------
-        list : Created IFC elements
+            list: Created IFC elements (IfcBuildingElementProxy and IfcAnnotation)
+            
+        Implementation:
+            - Finds nearest referent for placement (uses exact match or closest station)
+            - Creates markers at configured height offset above alignment
+            - Annotates with from/to grade information
+            - Handles missing referents gracefully by skipping
         """
         elements = []
         
         for change in slope_changes:
             station = change['station']
             
-            # Find nearest referent
+            # Find referent for this station (exact or nearest)
             base_referent = referent_map.get(station)
             if not base_referent:
                 nearest_station = min(referent_map.keys(), 
@@ -912,9 +1228,8 @@ class AlignmentMarkerProcessor:
             if not base_referent or not base_referent.ObjectPlacement:
                 continue
             
-            # Calculate placement
+            # Create placement for slope change marker (perpendicular orientation)
             offset_height = self.config['slope_marker_height_offset']
-            offset_vector = (0.0, 0.0, offset_height)
             
             marker_placement = PlacementCalculator.create_marker_placement(
                 self.model,
@@ -1073,26 +1388,61 @@ class AlignmentMarkerProcessor:
 
 def create_alignment_markers(input_file, output_file, add_slope_analysis=True, **config):
     """
-    Main function to create alignment markers with optional slope analysis
+    Main entry point for creating alignment markers with optional slope analysis.
     
-    Parameters:
-    -----------
-    input_file : str
-        Path to input IFC file
-    output_file : str
-        Path to output IFC file
-    add_slope_analysis : bool
-        If True, add slope information markers (default: True)
-    **config : dict
-        Configuration parameters
+    This function orchestrates the complete workflow:
+    1. Opens the input IFC file
+    2. Creates station markers (triangles/circles) at all referent points
+    3. Optionally performs slope analysis and creates slope markers
+    4. Assigns all elements to the spatial structure
+    5. Saves the modified model to the output file
+    
+    Args:
+        input_file (str): Path to input IFC file containing alignment with referents
+        output_file (str): Path where modified IFC file will be saved
+        add_slope_analysis (bool, optional): Enable slope change detection and markers.
+                                             Defaults to True.
+        **config: Configuration parameters passed as keyword arguments:
+            - triangle_height (float): Triangle marker height in meters
+            - triangle_thickness (float): Triangle marker thickness in meters
+            - triangle_color (tuple): RGB color for triangles (0-1 range)
+            - circle_radius (float): Circle marker radius in meters
+            - circle_thickness (float): Circle marker thickness in meters
+            - circle_color (tuple): RGB color for circles (0-1 range)
+            - text_height (float): Text annotation height in meters
+            - text_color (tuple): RGB color for text (0-1 range)
+            - text_position_offset (tuple): XYZ offset for text position
+            - marker_height_offset (float): Vertical offset for markers
+            - slope_marker_height_offset (float): Vertical offset for slope markers
+            - arrow_height_offset (float): Vertical offset for arrows
+            - grade_change_threshold (float): Minimum grade change to detect (decimal)
+            - known_slope_changes (list): Optional list of manually specified slope changes
+            
+    Returns:
+        None: Saves output to file specified by output_file parameter
+        
+    Prints:
+        - Progress information about markers created
+        - Statistics on station markers, slope changes, and directional arrows
+        - Spatial assignment confirmation
+        - Output file path
+        
+    Example:
+        >>> create_alignment_markers(
+        ...     "input.ifc",
+        ...     "output.ifc",
+        ...     add_slope_analysis=True,
+        ...     triangle_height=0.5,
+        ...     circle_radius=0.4
+        ... )
     """
-    # Open IFC file
+    # Load the IFC model
     model = ifcopenshell.open(input_file)
     
-    # Create processor
+    # Initialize the alignment marker processor with configuration
     processor = AlignmentMarkerProcessor(model, config)
     
-    # Process station markers
+    # STEP 1: Create station markers at all referent points
     print("\n" + "="*60)
     print("CREATING STATION MARKERS")
     print("="*60)
@@ -1101,33 +1451,35 @@ def create_alignment_markers(input_file, output_file, add_slope_analysis=True, *
     all_elements = station_elements
     slope_elements = []
     
-    # Process slope analysis if enabled
+    # STEP 2: Optionally add slope analysis
     if add_slope_analysis:
         print("\n" + "="*60)
         print("ADDING SLOPE ANALYSIS")
         print("="*60)
         
-        # Extract vertical segments
+        # Extract vertical alignment segments
         vertical_segments = processor.extract_vertical_segments()
         print(f"Found {len(vertical_segments)} vertical segments")
         
         if vertical_segments:
-            # Build referent map
+            # Build mapping from station values to referent entities
             referent_map = processor.build_referent_map()
             print(f"Found {len(referent_map)} station referents")
             
-            # Detect slope changes
+            # Detect significant grade changes
             detector = SlopeChangeDetector(vertical_segments, config.get('grade_change_threshold', 0.01))
             slope_changes = detector.detect_slope_changes()
             
-            # Add known changes if provided
+            # Optionally add manually specified slope changes
             if 'known_slope_changes' in config:
                 slope_changes = detector.add_known_changes(slope_changes, config['known_slope_changes'])
             
             print(f"Identified {len(slope_changes)} slope change points")
             
-            # Create slope markers
+            # Create slope change markers (orange circles at grade transitions)
             slope_change_elements = processor.process_slope_changes(slope_changes, referent_map)
+            
+            # Create directional arrows at stations showing slope direction
             station_slope_elements = processor.process_station_slopes(referent_map, vertical_segments)
             
             slope_elements = slope_change_elements + station_slope_elements
@@ -1167,72 +1519,122 @@ if __name__ == "__main__":
     # ============================================================================
     # USER CONFIGURABLE PARAMETERS
     # ============================================================================
+    """
+    Configuration Section
     
-    # Input/Output Files
-    INPUT_FILE = "m_f-veg_CL-1000.ifc"
-    OUTPUT_FILE = "m_f-veg_CL-1000_with_markers.ifc"
+    This section contains all user-configurable parameters for the alignment marker
+    creation process. Adjust these values to customize marker appearance, positioning,
+    and behavior.
     
-    # Enable/Disable Slope Analysis
-    ADD_SLOPE_ANALYSIS = True  # Set to False to only create station markers
+    Parameter Groups:
+    -----------------
+    1. Input/Output Files: Specify source and destination IFC files
+    2. Feature Flags: Enable/disable slope analysis
+    3. Station Markers: Configure triangles and circles for stations
+    4. Text Settings: Control text appearance and positioning
+    5. Slope Analysis: Configure slope change detection and markers
+    
+    Units:
+    ------
+    - All dimensions are in meters
+    - All colors are RGB tuples with values from 0.0 to 1.0
+    - Grades/slopes are in decimal form (e.g., 0.05 = 5% grade)
+    """
+    
+    # ============================================================================
+    # INPUT/OUTPUT FILES
+    # ============================================================================
+    
+    INPUT_FILE = "m_f-veg_CL-1000.ifc"  # Path to input IFC file with alignment
+    OUTPUT_FILE = "m_f-veg_CL-1000_with_markers.ifc"  # Path for output IFC file
+    
+    # ============================================================================
+    # FEATURE FLAGS
+    # ============================================================================
+    
+    # Set to True to include slope analysis (orange circles and directional arrows)
+    # Set to False to only create station markers (triangles and circles)
+    ADD_SLOPE_ANALYSIS = True
     
     # ============================================================================
     # STATION MARKER SETTINGS
     # ============================================================================
     
-    # Triangle Marker Settings (for intermediate stations)
-    TRIANGLE_HEIGHT = 0.5           # Height of triangle markers in meters
-    TRIANGLE_THICKNESS = 0.01       # Thickness of triangle markers in meters
-    TRIANGLE_COLOR = (0.0, 0.8, 0.0)  # RGB color (Green)
+    # Triangle Markers (Intermediate Stations)
+    # -----------------------------------------
+    # Green triangular markers placed at regular stations along the alignment
+    TRIANGLE_HEIGHT = 0.5           # Height of triangle in meters
+    TRIANGLE_THICKNESS = 0.01       # Thickness of triangle disk in meters
+    TRIANGLE_COLOR = (0.0, 0.8, 0.0)  # RGB color: Green (R=0.0, G=0.8, B=0.0)
     
-    # Circle Marker Settings (for start/end stations)
-    CIRCLE_RADIUS = 0.5             # Radius of circle markers in meters
-    CIRCLE_THICKNESS = 0.01         # Thickness of circle markers in meters
-    CIRCLE_COLOR = (1.0, 0.0, 0.0)  # RGB color (Red)
+    # Circle Markers (Start/End Stations)
+    # -----------------------------------
+    # Red circular markers placed at alignment start and end points
+    CIRCLE_RADIUS = 0.5             # Radius of circle in meters
+    CIRCLE_THICKNESS = 0.01         # Thickness of circle disk in meters
+    CIRCLE_COLOR = (1.0, 0.0, 0.0)  # RGB color: Red (R=1.0, G=0.0, B=0.0)
     
-    # Text Settings
-    TEXT_HEIGHT = 1.0               # Height of text labels in meters
-    TEXT_WIDTH_FACTOR = 0.6         # Width-to-height ratio for text characters
-    TEXT_COLOR = (0.0, 0.0, 0.0)    # RGB color (Black)
+    # Text Annotation Settings
+    # ------------------------
+    # Text labels showing station number, offset, and elevation
+    TEXT_HEIGHT = 1.0               # Height of text characters in meters
+    TEXT_WIDTH_FACTOR = 0.6         # Width-to-height ratio for characters (0.6 = 60% of height)
+    TEXT_COLOR = (0.0, 0.0, 0.0)    # RGB color: Black (R=0.0, G=0.0, B=0.0)
     
-    # Positioning Settings
-    MARKER_HEIGHT_OFFSET = 0.5      # Vertical offset for markers above alignment (meters)
-    TEXT_POSITION_OFFSET = (0.0, 0.2, 0.0)  # XYZ offset for text position
+    # Marker Positioning
+    # ------------------
+    # Vertical offsets control how far above the alignment centerline markers appear
+    MARKER_HEIGHT_OFFSET = 0.5      # Vertical offset for station markers (meters)
+    TEXT_POSITION_OFFSET = (0.0, 0.2, 0.0)  # XYZ offset: (right, forward, up) from marker
     
     # ============================================================================
-    # SLOPE ANALYSIS SETTINGS (only used if ADD_SLOPE_ANALYSIS = True)
+    # SLOPE ANALYSIS SETTINGS (only active if ADD_SLOPE_ANALYSIS = True)
     # ============================================================================
     
-    # Slope Change Marker Settings (Orange circles at grade change points)
-    SLOPE_MARKER_RADIUS = 0.4           # Radius of slope change markers in meters
-    SLOPE_MARKER_THICKNESS = 0.05       # Thickness of slope change markers in meters
-    SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB color (Orange)
-    SLOPE_MARKER_HEIGHT_OFFSET = 0.5    # Vertical offset above centerline (meters)
+    # Slope Change Markers (Orange Circles)
+    # --------------------------------------
+    # Orange circular markers placed at points where alignment grade changes significantly
+    SLOPE_MARKER_RADIUS = 0.4           # Radius of slope change circle in meters
+    SLOPE_MARKER_THICKNESS = 0.05       # Thickness of circle disk in meters
+    SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB color: Orange (R=1.0, G=0.5, B=0.0)
+    SLOPE_MARKER_HEIGHT_OFFSET = 1.0    # Vertical offset above centerline in meters
     
-    # Directional Arrow Settings (Shows slope direction along alignment)
-    ARROW_LENGTH = 0.5                  # Length of arrow in meters
+    # Directional Arrows (Green/Red Slope Indicators)
+    # ------------------------------------------------
+    # Arrows pointing along alignment showing slope direction:
+    # - Green arrows for upward slopes (positive grade)
+    # - Red arrows for downward slopes (negative grade)
+    ARROW_LENGTH = 0.5                  # Length of arrow body in meters
     ARROW_WIDTH = 0.25                  # Width of arrow in meters
     ARROW_THICKNESS = 0.05              # Thickness of arrow in meters
-    ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset above centerline (meters)
+    ARROW_HEIGHT_OFFSET = 0.8           # Vertical offset above centerline in meters
     
-    # Slope Text Settings
-    TEXT_HEIGHT_LARGE = 0.6             # Height for large text (e.g., grade changes) in meters
-    TEXT_HEIGHT_MEDIUM = 0.5            # Height for medium text (e.g., stations) in meters
-    TEXT_HEIGHT_SMALL = 0.4             # Height for small text (e.g., segments) in meters
-    TEXT_COLOR_SLOPE = (0.0, 0.0, 0.8)  # RGB color for slope text (DarkBlue)
-    TEXT_FONT = "Arial"                 # Font family
+    # Slope Text Annotation Settings
+    # -------------------------------
+    # Text annotations for slope information at various detail levels
+    TEXT_HEIGHT_LARGE = 0.6             # Large text for major information (meters)
+    TEXT_HEIGHT_MEDIUM = 0.5            # Medium text for standard labels (meters)
+    TEXT_HEIGHT_SMALL = 0.4             # Small text for detailed info (meters)
+    TEXT_COLOR_SLOPE = (0.0, 0.0, 0.8)  # RGB color: Dark Blue (R=0.0, G=0.0, B=0.8)
+    TEXT_FONT = "Arial"                 # Font family name
     
-    # Property Set Settings
-    PROPERTY_SET_NAME = "Pset_SlopeInformation"  # Name of property set
+    # Property Set Configuration
+    # --------------------------
+    PROPERTY_SET_NAME = "Pset_SlopeInformation"  # IFC property set name for slope data
     
-    # Detection Settings
-    GRADE_CHANGE_THRESHOLD = 0.01  # Minimum grade change to detect (1%)
+    # Slope Detection Threshold
+    # -------------------------
+    # Minimum grade change to trigger slope change marker creation
+    # Value is in decimal form: 0.01 = 1% grade change
+    # Smaller values = more sensitive detection, more markers created
+    GRADE_CHANGE_THRESHOLD = 0.01
     
-    # Known Slope Changes (optional - leave empty list if not needed)
-    KNOWN_SLOPE_CHANGES = [
-        {'station': 28.36, 'from_grade': -0.03, 'to_grade': 0.0202, 'height': 2.93, 'type': 'known'},
-        {'station': 106.86, 'from_grade': 0.0202, 'to_grade': -0.04, 'height': 3.63, 'type': 'known'},
-        {'station': 192.91, 'from_grade': -0.04, 'to_grade': 0.011, 'height': 1.82, 'type': 'known'}
-    ]
+    # Manual Slope Changes (Optional)
+    # -------------------------------
+    # List of dictionaries specifying known slope changes to add regardless of detection
+    # Useful for important design points that may fall below the threshold
+    # Format: [{'station': 123.45, 'from_grade': 0.02, 'to_grade': -0.03, 'height': 10.5, 'type': 'manual'}]
+    KNOWN_SLOPE_CHANGES = []  # Leave empty if not needed
     
     # ============================================================================
     # END OF USER CONFIGURABLE PARAMETERS
