@@ -35,6 +35,8 @@ Date: 2025
 import os
 import ifcopenshell
 import math
+import logging
+from typing import List, Dict, Tuple, Optional
 from geometry_markers import (
     TriangleMarker, CircleMarker, DirectionalArrow, MarkerElement, 
     TextAnnotation, generate_ifc_guid
@@ -46,6 +48,18 @@ __license__ = ""
 __version__ = '0.1'
 __email__ = 'eirik.rosbach@afry.com'
 __status__ = ' Prototype'
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("alignment_marker_creator.log"),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # STATION MARKER CLASSES
@@ -135,7 +149,7 @@ class StationMarkerFactory:
             station_value (float): Distance along alignment in meters
             placement (IfcLocalPlacement): Spatial placement for the marker (perpendicular to alignment)
             radius (float, optional): Radius of circle in meters. Defaults to 0.5m.
-            thickness (float, optional): Thickness of circle disk in meters. Defaults to 0.05m.
+            thickness (float, optional): Thickness of circle in meters. Defaults to 0.05m.
             color (tuple, optional): RGB color values (0-1 range). Defaults to red (1.0, 0.0, 0.0).
             marker_type (str, optional): Type identifier for properties. Defaults to "End".
             
@@ -262,7 +276,7 @@ class SlopeChangeDetector:
         Add known slope changes if not already detected.
         
         Merges manually specified slope changes with auto-detected ones, avoiding duplicates.
-        Useful for adding important changes that fall below the threshold or for validation.
+        Useful for adding important changes that fall below a threshold or for validation.
         
         Args:
             slope_changes (list): List of auto-detected slope changes
@@ -913,6 +927,14 @@ class AlignmentMarkerProcessor:
         >>> processor.process_alignment(alignment, add_slope_analysis=True)
     """
     
+    # Tolerance values
+    STATION_OFFSET_TOLERANCE = 0.01  # 1cm
+    STATION_PROXIMITY_TOLERANCE = 0.5  # 50cm for finding duplicates
+    
+    # Default property set names
+    DEFAULT_STATION_PSET = "Pset_StationText"
+    DEFAULT_SLOPE_PSET = "Pset_SlopeInformation"
+    
     def __init__(self, model, config):
         """
         Initialize the alignment marker processor.
@@ -925,6 +947,7 @@ class AlignmentMarkerProcessor:
             config (dict): Configuration dictionary containing all user-defined parameters
                           (marker sizes, offsets, text heights, colors, etc.)
         """
+        self._validate_config(config)
         self.model = model
         self.config = config
         self.project = model.by_type("IfcProject")[0]
@@ -945,6 +968,26 @@ class AlignmentMarkerProcessor:
         self.slope_factory = SlopeMarkerFactory(model, self.owner_history, self.context_3d)
         self.text_creator = TextLiteralCreator(model, self.context_3d)
         
+    def _validate_config(self, config: dict) -> None:
+        """Validate configuration parameters"""
+        required_keys = [
+            'triangle_height', 'circle_radius', 'marker_height_offset',
+            'text_height', 'slope_marker_height_offset'
+        ]
+        
+        for key in required_keys:
+            if key not in config:
+                raise ValueError(f"Missing required config parameter: {key}")
+            if config[key] <= 0:
+                raise ValueError(f"Config parameter {key} must be positive, got {config[key]}")
+        
+        # Validate colors are in 0-1 range
+        for color_key in ['triangle_color', 'circle_color', 'slope_marker_color']:
+            if color_key in config:
+                color = config[color_key]
+                if not all(0.0 <= c <= 1.0 for c in color):
+                    raise ValueError(f"{color_key} values must be in range 0.0-1.0")
+    
     def _get_3d_context(self):
         """Get 3D geometric representation context"""
         contexts = self.model.by_type("IfcGeometricRepresentationContext")
@@ -980,7 +1023,7 @@ class AlignmentMarkerProcessor:
             "Station XXX\\nOffset: YYY m\\nElevation: ZZZ m"
         """
         referents = self.model.by_type("IfcReferent")
-        print(f"Found {len(referents)} IFCREFERENT objects")
+        logger.info(f"Found {len(referents)} IFCREFERENT objects")
         
         # Determine start and end stations by finding min/max station values
         station_values = []
@@ -1004,25 +1047,35 @@ class AlignmentMarkerProcessor:
                 )
                 created_elements.extend(elements)
             except Exception as e:
-                print(f"Error processing referent {referent.Name}: {str(e)}")
+                logger.warning(f"Skipping referent without placement")
                 continue
         
         return created_elements
     
     def _process_single_referent(self, referent, min_station, max_station):
         """Process a single referent and create marker elements"""
-        if not referent.Name:
+        try:
+            if not referent.Name:
+                logger.warning(f"Skipping referent without name")
+                return []
+            
+            station_value = float(referent.Name)
+        except ValueError:
+            logger.warning(f"Cannot parse station value from '{referent.Name}', skipping")
+            return []
+        except Exception as e:
+            logger.error(f"Error processing referent {referent.Name}: {str(e)}")
             return []
         
-        station_value = float(referent.Name)
         display_text = str(int(station_value)) if station_value.is_integer() else f"{station_value:.1f}"
         
         is_start_or_end = (station_value == min_station or station_value == max_station)
         marker_type = "circle" if is_start_or_end else "triangle"
         
-        print(f"Processing station: {referent.Name} -> creating {marker_type} with text '{display_text}'")
+        logger.info(f"Processing station: {referent.Name} -> creating {marker_type} with text '{display_text}'")
         
         if not referent.ObjectPlacement:
+            logger.warning(f"Skipping referent without placement")
             return []
         
         # Create placement
@@ -1128,7 +1181,7 @@ class AlignmentMarkerProcessor:
             
             elements.append(text_annotation)
         
-        print(f"Created {marker_type} marker '{display_text}' for station {station_value}")
+        logger.info(f"Created {marker_type} marker '{display_text}' for station {station_value}")
         
         return elements
     
@@ -1197,7 +1250,11 @@ class AlignmentMarkerProcessor:
         
         return referent_map
     
-    def process_slope_changes(self, slope_changes, referent_map):
+    def process_slope_changes(
+        self, 
+        slope_changes: List[Dict[str, float]], 
+        referent_map: Dict[float, 'IfcReferent']
+    ) -> List['IfcBuildingElementProxy']:
         """
         Create orange circle markers and text annotations for slope change points.
         
@@ -1245,8 +1302,6 @@ class AlignmentMarkerProcessor:
             if abs(station_offset) > 0.01:  # More than 1cm offset
                 # Extract alignment direction from referent placement
                 align_dir = PlacementCalculator.calculate_alignment_direction(base_referent.ObjectPlacement)
-                
-                # Calculate perpendicular direction for marker orientation
                 perp_dir = PlacementCalculator.calculate_perpendicular_direction(base_referent.ObjectPlacement)
                 
                 # Create offset vector: station_offset along alignment + height offset upward
@@ -1551,9 +1606,9 @@ def create_alignment_markers(input_file, output_file, add_slope_analysis=True, *
     processor = AlignmentMarkerProcessor(model, config)
     
     # STEP 1: Create station markers at all referent points
-    print("\n" + "="*60)
-    print("CREATING STATION MARKERS")
-    print("="*60)
+    logger.info("\n" + "="*60)
+    logger.info("CREATING STATION MARKERS")
+    logger.info("="*60)
     station_elements = processor.process_station_markers()
     
     all_elements = station_elements
@@ -1561,18 +1616,18 @@ def create_alignment_markers(input_file, output_file, add_slope_analysis=True, *
     
     # STEP 2: Optionally add slope analysis
     if add_slope_analysis:
-        print("\n" + "="*60)
-        print("ADDING SLOPE ANALYSIS")
-        print("="*60)
+        logger.info("\n" + "="*60)
+        logger.info("ADDING SLOPE ANALYSIS")
+        logger.info("="*60)
         
         # Extract vertical alignment segments
         vertical_segments = processor.extract_vertical_segments()
-        print(f"Found {len(vertical_segments)} vertical segments")
+        logger.info(f"Found {len(vertical_segments)} vertical segments")
         
         if vertical_segments:
             # Build mapping from station values to referent entities
             referent_map = processor.build_referent_map()
-            print(f"Found {len(referent_map)} station referents")
+            logger.info(f"Found {len(referent_map)} station referents")
             
             # Detect significant grade changes
             detector = SlopeChangeDetector(vertical_segments, config.get('grade_change_threshold', 0.01))
@@ -1582,7 +1637,7 @@ def create_alignment_markers(input_file, output_file, add_slope_analysis=True, *
             if 'known_slope_changes' in config:
                 slope_changes = detector.add_known_changes(slope_changes, config['known_slope_changes'])
             
-            print(f"Identified {len(slope_changes)} slope change points")
+            logger.info(f"Identified {len(slope_changes)} slope change points")
             
             # Create slope change markers (orange circles at grade transitions)
             slope_change_elements = processor.process_slope_changes(slope_changes, referent_map)
@@ -1593,7 +1648,7 @@ def create_alignment_markers(input_file, output_file, add_slope_analysis=True, *
             slope_elements = slope_change_elements + station_slope_elements
             all_elements.extend(slope_elements)
         else:
-            print("⚠️  No vertical alignment segments found - skipping slope analysis")
+            logger.warning("No vertical alignment segments found - skipping slope analysis")
     
     # Add to spatial structure
     processor.add_to_spatial_structure(all_elements)
@@ -1602,25 +1657,25 @@ def create_alignment_markers(input_file, output_file, add_slope_analysis=True, *
     model.write(output_file)
     
     # Print summary
-    print("\n" + "="*60)
-    print("SUMMARY")
-    print("="*60)
-    print(f"Saved IFC file to: {output_file}")
-    print(f"\nCreated {len(station_elements)} station marker elements:")
-    print(f"  - Start/End stations: RED circular markers ({config['circle_radius']}m radius)")
-    print(f"  - Intermediate stations: GREEN triangular markers ({config['triangle_height']}m height)")
-    print(f"  - All positioned {config['marker_height_offset']}m above alignment")
-    print(f"  - Include {config['text_height']}m tall text labels")
+    logger.info("\n" + "="*60)
+    logger.info("SUMMARY")
+    logger.info("="*60)
+    logger.info(f"Saved IFC file to: {output_file}")
+    logger.info(f"\nCreated {len(station_elements)} station marker elements:")
+    logger.info(f"  - Start/End stations: RED circular markers ({config['circle_radius']}m radius)")
+    logger.info(f"  - Intermediate stations: GREEN triangular markers ({config['triangle_height']}m height)")
+    logger.info(f"  - All positioned {config['marker_height_offset']}m above alignment")
+    logger.info(f"  - Include {config['text_height']}m tall text labels")
     
     if add_slope_analysis and slope_elements:
-        print(f"\nCreated {len(slope_elements)} slope analysis elements:")
-        print(f"  - Slope change markers (orange circles): {config['slope_marker_radius']}m radius")
-        print(f"  - Directional arrows (green/red): {config['arrow_length']}m length")
-        print(f"  - Positioned {config['slope_marker_height_offset']}m and {config['arrow_height_offset']}m above alignment")
+        logger.info(f"\nCreated {len(slope_elements)} slope analysis elements:")
+        logger.info(f"  - Slope change markers (orange circles): {config['slope_marker_radius']}m radius")
+        logger.info(f"  - Directional arrows (green/red): {config['arrow_length']}m length")
+        logger.info(f"  - Positioned {config['slope_marker_height_offset']}m and {config['arrow_height_offset']}m above alignment")
     elif add_slope_analysis:
-        print("\nSlope analysis was enabled but no vertical alignment data found")
+        logger.warning("Slope analysis was enabled but no vertical alignment data found")
     
-    print("="*60 + "\n")
+    logger.info("="*60 + "\n")
 
 
 if __name__ == "__main__":
@@ -1701,7 +1756,7 @@ if __name__ == "__main__":
     
     # Slope Change Markers (Orange Circles)
     # --------------------------------------
-    # Orange circular markers placed at points where alignment grade changes significantly
+    # Orange circular markers placed at points where the alignment grade changes significantly
     SLOPE_MARKER_RADIUS = 0.4           # Radius of slope change circle in meters
     SLOPE_MARKER_THICKNESS = 0.05       # Thickness of circle disk in meters
     SLOPE_MARKER_COLOR = (1.0, 0.5, 0.0)  # RGB color: Orange (R=1.0, G=0.5, B=0.0)
@@ -1785,48 +1840,95 @@ if __name__ == "__main__":
     try:
         # Check if input file exists        
         if not os.path.exists(INPUT_FILE):
-            print(f"Error: Input file '{INPUT_FILE}' does not exist.")
-            print("Please check the file path and ensure the file is in the correct location.")
+            logger.error(f"Input file '{INPUT_FILE}' does not exist.")
+            logger.info("Please check the file path and ensure the file is in the correct location.")
             exit(1)
         
         # Check if input file is readable
         if not os.access(INPUT_FILE, os.R_OK):
-            print(f"Error: Input file '{INPUT_FILE}' is not readable.")
-            print("Please check file permissions.")
+            logger.error(f"Input file '{INPUT_FILE}' is not readable.")
+            logger.info("Please check file permissions.")
             exit(1)
         
         # Check if output directory exists and is writable
         output_dir = os.path.dirname(OUTPUT_FILE)
         if output_dir and not os.path.exists(output_dir):
-            print(f"Error: Output directory '{output_dir}' does not exist.")
-            print("Please create the directory or specify a valid output path.")
+            logger.error(f"Output directory '{output_dir}' does not exist.")
+            logger.info("Please create the directory or specify a valid output path.")
             exit(1)
         
         if output_dir and not os.access(output_dir, os.W_OK):
-            print(f"Error: Output directory '{output_dir}' is not writable.")
-            print("Please check directory permissions.")
+            logger.error(f"Output directory '{output_dir}' is not writable.")
+            logger.info("Please check directory permissions.")
             exit(1)
         
-        print(f"Processing IFC file: {INPUT_FILE}")
-        print(f"Slope analysis: {'ENABLED' if ADD_SLOPE_ANALYSIS else 'DISABLED'}")
+        logger.info(f"Processing IFC file: {INPUT_FILE}")
+        logger.info(f"Slope analysis: {'ENABLED' if ADD_SLOPE_ANALYSIS else 'DISABLED'}")
         
         create_alignment_markers(INPUT_FILE, OUTPUT_FILE, ADD_SLOPE_ANALYSIS, **config)
         
     except ifcopenshell.Error as e:
-        print(f"IFC file error: {str(e)}")
-        print("The input file may be corrupted or not a valid IFC file.")
+        logger.error(f"IFC file error: {str(e)}")
+        logger.info("The input file may be corrupted or not a valid IFC file.")
         exit(1)
     except PermissionError as e:
-        print(f"Permission error: {str(e)}")
-        print("Please check file and directory permissions.")
+        logger.error(f"Permission error: {str(e)}")
+        logger.info("Please check file and directory permissions.")
         exit(1)
     except FileNotFoundError as e:
-        print(f"File not found error: {str(e)}")
-        print("Please check that all required files exist.")
+        logger.error(f"File not found error: {str(e)}")
+        logger.info("Please check that all required files exist.")
         exit(1)
     except Exception as e:
-        print(f"An unexpected error occurred: {str(e)}")
-        print("Please check your input file and configuration settings.")
+        logger.error(f"An unexpected error occurred: {str(e)}")
+        logger.info("Please check your input file and configuration settings.")
         import traceback
         traceback.print_exc()
         exit(1)
+
+def _create_ifc_point(self, coords: Tuple[float, float, float]) -> 'IfcCartesianPoint':
+    """Helper to create IFC point"""
+    return self.model.create_entity("IfcCartesianPoint", Coordinates=coords)
+
+def _create_ifc_direction(self, ratios: Tuple[float, float, float]) -> 'IfcDirection':
+    """Helper to create IFC direction"""
+    return self.model.create_entity("IfcDirection", DirectionRatios=ratios)
+
+def _create_axis_placement_3d(
+    self,
+    location: Tuple[float, float, float],
+    axis: Tuple[float, float, float],
+    ref_direction: Tuple[float, float, float]
+) -> 'IfcAxis2Placement3D':
+    """Helper to create axis placement"""
+    return self.model.create_entity(
+        "IfcAxis2Placement3D",
+        Location=self._create_ifc_point(location),
+        Axis=self._create_ifc_direction(axis),
+        RefDirection=self._create_ifc_direction(ref_direction)
+    )
+
+class ProcessingStatistics:
+    """Track processing statistics"""
+    def __init__(self):
+        self.station_markers = 0
+        self.slope_changes = 0
+        self.arrows = 0
+        self.errors = []
+        self.warnings = []
+    
+    def add_error(self, message: str):
+        self.errors.append(message)
+    
+    def add_warning(self, message: str):
+        self.warnings.append(message)
+    
+    def print_summary(self):
+        print(f"\nProcessing Statistics:")
+        print(f"  Station markers: {self.station_markers}")
+        print(f"  Slope changes: {self.slope_changes}")
+        print(f"  Directional arrows: {self.arrows}")
+        if self.warnings:
+            print(f"  Warnings: {len(self.warnings)}")
+        if self.errors:
+            print(f"  Errors: {len(self.errors)}")
