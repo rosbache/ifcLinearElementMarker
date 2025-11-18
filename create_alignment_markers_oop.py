@@ -316,6 +316,33 @@ class PlacementCalculator:
     """Utility class for spatial calculations"""
     
     @staticmethod
+    def calculate_alignment_direction(placement):
+        """
+        Calculate alignment direction from referent placement
+        
+        Parameters:
+        -----------
+        placement : IfcLocalPlacement
+            Referent placement
+            
+        Returns:
+        --------
+        tuple : (x, y, z) normalized alignment direction
+        """
+        try:
+            rel_placement = placement.RelativePlacement
+            if hasattr(rel_placement, 'RefDirection') and rel_placement.RefDirection:
+                align_dir = rel_placement.RefDirection.DirectionRatios
+                # Normalize
+                length = math.sqrt(align_dir[0]**2 + align_dir[1]**2 + align_dir[2]**2)
+                if length > 0.001:
+                    return (align_dir[0]/length, align_dir[1]/length, align_dir[2]/length)
+        except Exception:
+            pass
+        
+        return (1.0, 0.0, 0.0)  # Default alignment direction
+    
+    @staticmethod
     def calculate_perpendicular_direction(placement):
         """
         Calculate perpendicular direction to alignment from referent placement
@@ -383,6 +410,50 @@ class PlacementCalculator:
             Location=offset_point,
             Axis=z_direction,
             RefDirection=y_direction
+        )
+        
+        return model.create_entity(
+            "IfcLocalPlacement",
+            PlacementRelTo=referent_placement,
+            RelativePlacement=local_axis_placement
+        )
+    
+    @staticmethod
+    def create_arrow_placement(model, referent_placement, height_offset=0.8):
+        """
+        Create placement for directional arrow along alignment
+        
+        Parameters:
+        -----------
+        model : ifcopenshell.file
+            The IFC model
+        referent_placement : IfcLocalPlacement
+            Base referent placement
+        height_offset : float
+            Vertical offset above centerline
+            
+        Returns:
+        --------
+        IfcLocalPlacement
+        """
+        align_dir = PlacementCalculator.calculate_alignment_direction(referent_placement)
+        
+        # Position arrow above the line
+        offset_point = model.create_entity(
+            "IfcCartesianPoint", 
+            Coordinates=(0.0, 0.0, height_offset)
+        )
+        
+        # Orientation: X-axis along alignment direction, Z-axis up
+        # This makes the arrow point along the alignment
+        x_direction = model.create_entity("IfcDirection", DirectionRatios=align_dir)
+        z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+        
+        local_axis_placement = model.create_entity(
+            "IfcAxis2Placement3D",
+            Location=offset_point,
+            Axis=z_direction,
+            RefDirection=x_direction
         )
         
         return model.create_entity(
@@ -902,10 +973,10 @@ class AlignmentMarkerProcessor:
             grade = self._get_grade_at_station(station, vertical_segments)
             height = detector._calculate_height_at_station(station)
             
-            # Create offset placement
+            # Create arrow placement - oriented along alignment direction
             offset_height = self.config['arrow_height_offset']
             
-            arrow_placement = PlacementCalculator.create_marker_placement(
+            arrow_placement = PlacementCalculator.create_arrow_placement(
                 self.model,
                 referent.ObjectPlacement,
                 offset_height
