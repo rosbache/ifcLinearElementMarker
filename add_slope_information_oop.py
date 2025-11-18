@@ -386,50 +386,46 @@ class PlacementCalculator:
     def create_offset_placement(model, base_placement, offset_vector):
         """
         Create new placement offset from base placement
+        Creates a relative placement, not absolute coordinates
         
         Parameters:
         -----------
         model : ifcopenshell.file
             IFC model
-        base_placement : IfcLocalPlacement
+        base_placement : IfcLocalPlacement or IfcLinearPlacement
             Base placement to offset from
         offset_vector : tuple
-            XYZ offset vector
+            XYZ offset vector (relative to base placement)
             
         Returns:
         --------
         IfcLocalPlacement
         """
-        base_pos = PlacementCalculator.extract_position(base_placement)
-        new_pos = (
-            base_pos[0] + offset_vector[0],
-            base_pos[1] + offset_vector[1],
-            base_pos[2] + offset_vector[2]
+        # Create offset point - this is relative to base_placement
+        offset_point = model.create_entity("IfcCartesianPoint", Coordinates=offset_vector)
+        
+        # Create axis placement with Z pointing up
+        z_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+        
+        # Try to get perpendicular direction from base placement for Y-axis
+        try:
+            perp_dir = PlacementCalculator.calculate_perpendicular_direction(base_placement)
+            y_direction = model.create_entity("IfcDirection", DirectionRatios=perp_dir)
+        except:
+            y_direction = model.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0))
+        
+        local_axis_placement = model.create_entity(
+            "IfcAxis2Placement3D",
+            Location=offset_point,
+            Axis=z_direction,
+            RefDirection=y_direction
         )
         
-        new_location = model.create_entity("IfcCartesianPoint", Coordinates=new_pos)
-        
-        try:
-            base_rel = base_placement.RelativePlacement
-            axis = base_rel.Axis if hasattr(base_rel, 'Axis') and base_rel.Axis else None
-            ref_dir = base_rel.RefDirection if hasattr(base_rel, 'RefDirection') and base_rel.RefDirection else None
-            
-            new_rel_placement = model.create_entity(
-                "IfcAxis2Placement3D",
-                Location=new_location,
-                Axis=axis,
-                RefDirection=ref_dir
-            )
-        except:
-            new_rel_placement = model.create_entity(
-                "IfcAxis2Placement3D",
-                Location=new_location
-            )
-        
+        # Create relative placement - PlacementRelTo points to the base placement
         return model.create_entity(
             "IfcLocalPlacement",
-            PlacementRelTo=base_placement.PlacementRelTo,
-            RelativePlacement=new_rel_placement
+            PlacementRelTo=base_placement,
+            RelativePlacement=local_axis_placement
         )
 
 
@@ -473,16 +469,32 @@ class SlopeAnalysisProcessor:
         for vertical in alignment_verticals:
             for rel in self.model.by_type("IfcRelNests"):
                 if rel.RelatingObject == vertical:
-                    for segment in rel.RelatedObjects:
-                        if segment.is_a("IfcAlignmentVerticalSegment"):
-                            design_params = segment.DesignParameters
+                    for segment_entity in rel.RelatedObjects:
+                        # Handle both IFC 4.0 and IFC 4.3 formats
+                        if hasattr(segment_entity, 'DesignParameters'):
+                            # IFC 4.3: DesignParameters wrapper
+                            segment = segment_entity.DesignParameters
+                            if hasattr(segment, 'StartDistAlong') and hasattr(segment, 'HorizontalLength'):
+                                vertical_segments.append({
+                                    'start_distance': segment.StartDistAlong,
+                                    'length': segment.HorizontalLength,
+                                    'start_height': segment.StartHeight,
+                                    'start_grade': segment.StartGradient,
+                                    'end_grade': segment.EndGradient,
+                                    'curve_type': str(segment.PredefinedType),
+                                    'radius': getattr(segment, 'StartRadiusOfCurvature', None)
+                                })
+                        elif segment_entity.is_a("IfcAlignmentVerticalSegment"):
+                            # IFC 4.0: Direct attributes
+                            segment = segment_entity
                             vertical_segments.append({
-                                'start_distance': design_params.StartDistAlong,
-                                'length': design_params.HorizontalLength,
-                                'start_height': design_params.StartHeight,
-                                'start_grade': design_params.StartGradient,
-                                'end_grade': getattr(design_params, 'EndGradient', design_params.StartGradient),
-                                'curve_type': segment.PredefinedType
+                                'start_distance': segment.StartDistAlong,
+                                'length': segment.HorizontalLength,
+                                'start_height': segment.StartHeight,
+                                'start_grade': segment.StartGradient,
+                                'end_grade': segment.EndGradient if hasattr(segment, 'EndGradient') else segment.StartGradient,
+                                'curve_type': str(segment.PredefinedType),
+                                'radius': segment.RadiusOfCurvature if hasattr(segment, 'RadiusOfCurvature') else None
                             })
         
         return sorted(vertical_segments, key=lambda x: x['start_distance'])
@@ -540,15 +552,14 @@ class SlopeAnalysisProcessor:
             if not base_referent or not base_referent.ObjectPlacement:
                 continue
             
-            # Calculate placement
-            perp_dir = PlacementCalculator.calculate_perpendicular_direction(
-                base_referent.ObjectPlacement
-            )
-            offset = config['slope_marker_height_offset']
+            # Calculate placement - offset perpendicular to alignment
+            # The offset vector is relative to the referent placement
+            # X/Y based on perpendicular, Z for vertical height
+            offset_height = config['slope_marker_height_offset']
             offset_vector = (
-                perp_dir[0] * offset,
-                perp_dir[1] * offset,
-                perp_dir[2] * offset
+                0.0,  # No longitudinal offset along alignment
+                0.0,  # No lateral offset (already at centerline)
+                offset_height  # Vertical offset above centerline
             )
             
             marker_placement = PlacementCalculator.create_offset_placement(
@@ -634,15 +645,13 @@ class SlopeAnalysisProcessor:
             grade = self._get_grade_at_station(station, vertical_segments)
             height = detector._calculate_height_at_station(station)
             
-            # Create offset placement
-            perp_dir = PlacementCalculator.calculate_perpendicular_direction(
-                referent.ObjectPlacement
-            )
-            offset = config['arrow_height_offset']
+            # Create offset placement - offset above alignment
+            # The offset vector is relative to the referent placement
+            offset_height = config['arrow_height_offset']
             offset_vector = (
-                perp_dir[0] * offset,
-                perp_dir[1] * offset,
-                perp_dir[2] * offset
+                0.0,  # No longitudinal offset
+                0.0,  # No lateral offset
+                offset_height  # Vertical offset above centerline
             )
             
             arrow_placement = PlacementCalculator.create_offset_placement(
@@ -816,11 +825,15 @@ class SlopeAnalysisProcessor:
         print(f"   🏷️ {element_counts.get('segment_boundaries', 0)} segment boundary markers")
         
         print("\n📈 Slope Analysis Summary:")
-        total_length = vertical_segments[-1]['start_distance'] + vertical_segments[-1]['length']
-        print(f"   • Total alignment length: {total_length:.1f}m")
-        print(f"   • Steepest upward grade: {max(seg['end_grade'] for seg in vertical_segments)*100:.1f}%")
-        print(f"   • Steepest downward grade: {min(seg['start_grade'] for seg in vertical_segments)*100:.1f}%")
-        print(f"   • Number of grade changes: {len(slope_changes)}")
+        if vertical_segments:
+            total_length = vertical_segments[-1]['start_distance'] + vertical_segments[-1]['length']
+            print(f"   • Total alignment length: {total_length:.1f}m")
+            print(f"   • Steepest upward grade: {max(seg['end_grade'] for seg in vertical_segments)*100:.1f}%")
+            print(f"   • Steepest downward grade: {min(seg['start_grade'] for seg in vertical_segments)*100:.1f}%")
+            print(f"   • Number of grade changes: {len(slope_changes)}")
+        else:
+            print(f"   ⚠️  No vertical alignment segments found in IFC file")
+            print(f"   • Number of slope changes processed: {len(slope_changes)} (from known points)")
 
 
 def add_slope_information_oop(input_file, output_file, config=None):
@@ -923,8 +936,15 @@ if __name__ == "__main__":
     # ============================================================================
     
     # Input/Output Files
+    # Use the output from create_text_markers_oop.py as input
+    # input_file = "m_f-veg_CL-1000.ifc"
     input_file = "m_f-veg_CL-1000_with_text_oop.ifc"
     output_file = "m_f-veg_CL-1000_with_text_slope_analysis_oop.ifc"
+    
+    # NOTE: If you want to use the procedural version's output, change to:
+    # input_file = "m_f-veg_CL-1000_with_text.ifc"
+    # Or use the base file with vertical alignment:
+    # input_file = "m_f-veg_CL-1000.ifc"
     
     # Configuration dictionary
     config = {
