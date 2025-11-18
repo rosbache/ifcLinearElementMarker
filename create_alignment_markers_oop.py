@@ -1226,22 +1226,56 @@ class AlignmentMarkerProcessor:
             
             # Find referent for this station (exact or nearest)
             base_referent = referent_map.get(station)
+            station_offset = 0.0
+            
             if not base_referent:
                 nearest_station = min(referent_map.keys(), 
                                     key=lambda s: abs(s - station))
                 base_referent = referent_map[nearest_station]
+                # Calculate offset along alignment from nearest station to actual station
+                station_offset = station - nearest_station
             
             if not base_referent or not base_referent.ObjectPlacement:
                 continue
             
-            # Create placement for slope change marker (perpendicular orientation)
+            # Create placement for slope change marker with station offset
             offset_height = self.config['slope_marker_height_offset']
             
-            marker_placement = PlacementCalculator.create_marker_placement(
-                self.model,
-                base_referent.ObjectPlacement,
-                offset_height
-            )
+            # If there's a station offset, we need to position along the alignment direction
+            if abs(station_offset) > 0.01:  # More than 1cm offset
+                # Extract alignment direction from referent placement
+                align_dir = PlacementCalculator.calculate_alignment_direction(base_referent.ObjectPlacement)
+                
+                # Calculate perpendicular direction for marker orientation
+                perp_dir = PlacementCalculator.calculate_perpendicular_direction(base_referent.ObjectPlacement)
+                
+                # Create offset vector: station_offset along alignment + height offset upward
+                offset_vector = (
+                    station_offset * align_dir[0],
+                    station_offset * align_dir[1],
+                    offset_height
+                )
+                
+                # Create placement with perpendicular orientation at offset location
+                offset_point = self.model.create_entity("IfcCartesianPoint", Coordinates=offset_vector)
+                y_direction = self.model.create_entity("IfcDirection", DirectionRatios=perp_dir)
+                z_direction = self.model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+                
+                local_axis_placement = self.model.create_entity("IfcAxis2Placement3D",
+                                                               Location=offset_point,
+                                                               Axis=z_direction,
+                                                               RefDirection=y_direction)
+                
+                marker_placement = self.model.create_entity("IfcLocalPlacement",
+                                                           PlacementRelTo=base_referent.ObjectPlacement,
+                                                           RelativePlacement=local_axis_placement)
+            else:
+                # No offset needed, use standard perpendicular placement
+                marker_placement = PlacementCalculator.create_marker_placement(
+                    self.model,
+                    base_referent.ObjectPlacement,
+                    offset_height
+                )
             
             # Create slope change marker
             marker_element = self.slope_factory.create_slope_change_marker(
@@ -1619,8 +1653,8 @@ if __name__ == "__main__":
     # INPUT/OUTPUT FILES
     # ============================================================================
     
-    INPUT_FILE = "m_f-veg_CL-1000.ifc"  # Path to input IFC file with alignment
-    OUTPUT_FILE = "m_f-veg_CL-1000_with_markers.ifc"  # Path for output IFC file
+    INPUT_FILE = "m_f-veg_P01-10000-Overbygning_18342b.ifc"  # Path to input IFC file with alignment
+    OUTPUT_FILE = "m_f-veg_P01-10000-Overbygning_18342b_with_markers.ifc"  # Path for output IFC file
     
     # ============================================================================
     # FEATURE FLAGS
