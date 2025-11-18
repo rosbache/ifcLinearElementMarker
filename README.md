@@ -44,17 +44,22 @@ The system uses a modular, extensible architecture with shared geometry classes 
   - 🟠 **Orange circles** at grade change points
   - Automatic detection of transitions between constant grades and curves
   - Support for known slope change points
+  - **Text annotations** showing transition details:
+    - Title: "Slope Change at {station}m"
+    - Grade transition: "Grade: X% → Y% (+Z%)"
   
 - **Directional Arrows**:
   - 🟢 **Green arrows** for positive (upward) slopes
   - 🔴 **Red arrows** for negative (downward) slopes
   - Arrows point along alignment direction with increasing stations
+  - **Text annotations** showing current grade: "Grade: X%"
   
 - **Comprehensive Information**:
   - Grade percentages and decimal values
   - Height above datum at each point
   - Slope direction indicators
   - Change type classification
+  - Fully annotated text labels for all slope elements
 
 ### Architecture
 
@@ -208,12 +213,17 @@ The script generates **2 IFC elements per station**:
    - IfcBuildingElementProxy with circular geometry
    - Property set with grade change information
    - Positioned at detected or known slope change locations
+   - **Two text annotations per marker**:
+     - Title text: "Slope Change at {station}m" (large text)
+     - Grade change text: "Grade: X% → Y% (+Z%)" (medium text)
 
 2. **Directional Arrows** - Green/red arrows showing slope direction
    - IfcBuildingElementProxy with arrow geometry
    - Oriented along alignment direction
    - Color indicates slope direction (green=upward, red=downward)
    - Created at every other station
+   - **One text annotation per arrow**:
+     - Grade text: "Grade: X%" (medium text)
 
 ### Example Output
 
@@ -221,9 +231,9 @@ For a file with 24 stations and slope analysis enabled:
 - **48 station marker elements** (24 markers + 24 text annotations)
   - 2 red circles at start/end stations
   - 22 green triangles at intermediate stations
-- **18 slope analysis elements**
-  - 6 orange slope change markers
-  - 12 directional arrows (every other station)
+- **36 slope analysis elements**
+  - 6 orange slope change markers with 12 text annotations (2 per marker)
+  - 12 directional arrows with 12 text annotations (1 per arrow)
 
 ## Marker Specifications
 
@@ -257,11 +267,23 @@ For a file with 24 stations and slope analysis enabled:
 - **Position**: Above alignment at configurable offset
 
 ### Text Labels
-- **Height**: Configurable (default: 1.0 meters for station text)
+
+**Station Text:**
+- **Height**: Configurable (default: 1.0 meters)
 - **Font**: Arial (for IfcTextLiteral)
-- **Color**: Configurable (default: Black for stations, DarkBlue for slope info)
+- **Color**: Configurable (default: Black)
 - **Content**: Station value (e.g., "0", "10", "100", "228.6")
 - **Format**: Integer display for whole numbers, one decimal for fractional values
+
+**Slope Analysis Text:**
+- **Heights**: Three configurable sizes (default: 0.6m large, 0.5m medium, 0.4m small)
+- **Font**: Arial (for IfcTextLiteral)
+- **Color**: Configurable (default: Black)
+- **Content Types**:
+  - **Slope Change Title**: "Slope Change at {station}m" (large text, 1.2m above marker)
+  - **Grade Transition**: "Grade: X% → Y% (+Z%)" (medium text, 0.8m above marker)
+  - **Arrow Grade**: "Grade: X%" (medium text, 0.6m above arrow)
+- **Format**: Percentages with one decimal place, direction symbol (→)
 
 ## Architecture
 
@@ -316,13 +338,16 @@ Unified script for creating both station markers and slope analysis:
 
 ### Slope Analysis Entities
 
-**Slope Change Markers:**
+**Slope Change Markers (3 entities per change point):**
 - `IfcBuildingElementProxy` with circular geometry
 - Property set including: FromGradePercent, ToGradePercent, GradeChange, HeightAboveDatum, ChangeType
+- `IfcAnnotation` with title text: "Slope Change at {station}m"
+- `IfcAnnotation` with grade transition text: "Grade: X% → Y% (+Z%)"
 
-**Directional Arrows:**
+**Directional Arrows (2 entities per arrow):**
 - `IfcBuildingElementProxy` with arrow geometry oriented along alignment
 - Property set including: GradePercent, GradeDecimal, SlopeDirection, HeightAboveDatum
+- `IfcAnnotation` with grade text: "Grade: X%"
 
 ### Property Sets
 
