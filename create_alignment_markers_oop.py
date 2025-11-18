@@ -40,6 +40,12 @@ from geometry_markers import (
     TextAnnotation, generate_ifc_guid
 )
 
+__author__ = 'Eirik Rosbach'
+__copyright__ = 'Copyright 2025, Eirik Rosbach'
+__license__ = ""
+__version__ = '0.1'
+__email__ = 'eirik.rosbach@afry.com'
+__status__ = ' Prototype'
 
 # ============================================================================
 # STATION MARKER CLASSES
