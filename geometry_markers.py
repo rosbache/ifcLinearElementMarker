@@ -60,6 +60,12 @@ from abc import ABC, abstractmethod
 import uuid
 import base64
 
+__author__ = 'Eirik Rosbach'
+__copyright__ = 'Copyright 2025, Eirik Rosbach'
+__license__ = ""
+__version__ = '0.1'
+__email__ = 'eirik.rosbach@afry.com'
+__status__ = ' Prototype'
 
 def generate_ifc_guid():
     """
